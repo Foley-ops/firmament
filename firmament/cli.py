@@ -126,14 +126,20 @@ def cmd_resume(args):
             return
         except Exception:
             attempts += 1
-            if not getattr(args, "auto_restart", False) or attempts >= 3:
+            if not getattr(args, "auto_restart", False):
                 raise
-            import json as _json
-            crash = _json.loads((run_dir / "crash.json").read_text())
-            get("cli").warning("auto-restart after crash", extra={
-                "crash_tick": crash["tick"],
-                "resuming_from": crash["last_good_snapshot"],
-                "gap_ticks": None})
+            # a CUDA-level error poisons the GPU context: in-process retry is futile.
+            # Re-exec a fresh process (marker file counts attempts across execs).
+            marker = run_dir / ".restart_count"
+            n = int(marker.read_text()) if marker.exists() else 0
+            if n >= 3:
+                marker.unlink(missing_ok=True)
+                raise
+            marker.write_text(str(n + 1))
+            get("cli").warning("auto-restart: re-exec fresh process", extra={"attempt": n + 1})
+            import os as _os
+            import sys as _sys
+            _os.execv(_sys.executable, [_sys.executable, "-m", "firmament.cli"] + _sys.argv[1:])
 
 
 def cmd_fork(args):

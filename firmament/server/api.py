@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -166,49 +166,43 @@ def make_app(sched, run_dir: Path) -> FastAPI:
         return {"ok": True}
 
     # ---------- inspector ----------
+    def _view():
+        # Build-guide 8: the GUI never reads live GPU memory — read-only copies only.
+        # The instrument sampler refreshes this host-side view every metrics interval.
+        v = getattr(sched, "latest_view", None)
+        if v is None:
+            raise HTTPException(status_code=503, detail="view warming up (first sample pending)")
+        return v
+
     @app.get("/api/inspect/cell")
     def inspect_cell(x: int, y: int):
-        s = sched.state
+        v = _view()
         chem = sched.chem
-        lock = getattr(s, "gpu_lock", None)
-        if lock:
-            lock.acquire()
-        try:
-            return _inspect_cell_inner(s, chem, x, y)
-        finally:
-            if lock:
-                lock.release()
-
-    def _inspect_cell_inner(s, chem, x: int, y: int):
-        spec = s.species.numpy()[:, y, x]
-        alive = s.p_state.numpy() > 0
-        here = np.nonzero(alive & (s.p_cell.numpy() == y * s.shape[1] + x))[0]
+        w = v["shape"][1]
+        spec = v["species"][:, y, x]
+        alive = v["p_state"] > 0
+        here = np.nonzero(alive & (v["p_cell"] == y * w + x))[0]
         return {
-            "cell": [x, y],
-            "elevation": float(s.elevation.numpy()[y, x]),
-            "water_depth": float(s.water_depth.numpy()[y, x]),
-            "temp": [float(t) for t in s.temp.numpy()[:, y, x]],
-            "light": float(s.light.numpy()[y, x]),
-            "compartment": int(s.compartment_id.numpy()[y, x]),
-            "membrane_L": int(s.membrane_store.numpy()[y, x]) if hasattr(s, "membrane_store") else 0,
+            "cell": [x, y], "as_of_tick": v["tick"],
+            "elevation": float(v["elevation"][y, x]),
+            "water_depth": float(v["water_depth"][y, x]),
+            "temp": [float(t) for t in v["temp"][:, y, x]],
+            "light": float(v["light"][y, x]),
+            "compartment": int(v["compartment_id"][y, x]),
+            "membrane_L": int(v["membrane_store"][y, x]) if "membrane_store" in v else 0,
             "species": {n: int(spec[chem.index[n]]) for n in chem.names},
-            "polymers": [int(s.p_id.numpy()[p]) for p in here[:50]],
+            "polymers": [int(v["p_id"][p]) for p in here[:50]],
         }
 
     @app.get("/api/inspect/polymer")
     def inspect_polymer(id: int):
-        with getattr(sched.state, "gpu_lock", None) or __import__("threading").Lock():
-            return _inspect_polymer_inner(id)
-
-    def _inspect_polymer_inner(id: int):
-        s = sched.state
-        ids = s.p_id.numpy()
-        slots = np.nonzero((ids == id) & (s.p_state.numpy() > 0))[0]
+        v = _view()
+        slots = np.nonzero((v["p_id"] == id) & (v["p_state"] > 0))[0]
         if len(slots) == 0:
             return JSONResponse({"error": "not alive"}, status_code=404)
         p = int(slots[0])
-        ln = int(s.p_len.numpy()[p])
-        seq = s.p_seq.numpy()[p, :ln]
+        ln = int(v["p_len"][p])
+        seq = v["p_seq"][p, :ln]
         names = ["", "M1", "M2", "M3", "M4"]
         poly = sched.poly
         motifs = []
@@ -218,24 +212,20 @@ def make_app(sched, run_dir: Path) -> FastAPI:
                 if (seq[pos:pos + k] == row).all():
                     motifs.append({"name": poly.motif_names[mi], "pos": pos, "len": k})
         lineage_path = sched.lineage.path_to_seed(id) if sched.lineage else []
-        return {"id": id, "parent": int(s.p_parent.numpy()[p]),
-                "cell": int(s.p_cell.numpy()[p]), "length": ln,
-                "state": int(s.p_state.numpy()[p]), "born_tick": int(s.p_born.numpy()[p]),
-                "mutations": int(s.p_mut.numpy()[p]) if hasattr(s, "p_mut") else 0,
+        return {"id": id, "parent": int(v["p_parent"][p]),
+                "cell": int(v["p_cell"][p]), "length": ln,
+                "state": int(v["p_state"][p]), "born_tick": int(v["p_born"][p]),
+                "mutations": int(v["p_mut"][p]) if "p_mut" in v else 0,
                 "sequence": "".join(names[m] for m in seq),
                 "motifs": motifs, "lineage_path": lineage_path}
 
     @app.get("/api/lineage/tree")
     def lineage_tree(limit: int = 2000):
-        with getattr(sched.state, "gpu_lock", None) or __import__("threading").Lock():
-            return _lineage_tree_inner(limit)
-
-    def _lineage_tree_inner(limit: int = 2000):
-        s = sched.state
-        alive = np.nonzero(s.p_state.numpy() > 0)[0][:limit]
-        return [{"id": int(s.p_id.numpy()[p]), "parent": int(s.p_parent.numpy()[p]),
-                 "len": int(s.p_len.numpy()[p]), "cell": int(s.p_cell.numpy()[p]),
-                 "motifs": int(s.p_motifs.numpy()[p])} for p in alive]
+        v = _view()
+        alive = np.nonzero(v["p_state"] > 0)[0][:limit]
+        return [{"id": int(v["p_id"][p]), "parent": int(v["p_parent"][p]),
+                 "len": int(v["p_len"][p]), "cell": int(v["p_cell"][p]),
+                 "motifs": int(v["p_motifs"][p])} for p in alive]
 
     @app.get("/api/events")
     def events(tail: int = 200):
