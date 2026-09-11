@@ -183,3 +183,25 @@ to a resumable run by `firmament resume --serve`.
    creation of exactly one L molecule (C6H12O2) — a first-membrane-split-era event.
    The audit did its job (hard stop, run marked); deterministic replay bisection is
    running to pin the responsible module. M1 will not launch until this is fixed.
+
+## L-molecule audit violation — RESOLVED (2026-09-11)
+
+The tick-67,000 creation of one L molecule in the 64² acceptance run is fixed.
+Deterministic replay bisection (snapshot 36,000 → per-module element ledger) pinned
+it to the polymers module at tick 66,934; an in-tick probe found membrane_store at
+cell (17,29) entering the membrane pass at −1 and being silently clamped to 0.
+
+Causal chain: species DIFFUSION was not availability-capped — a cell holding one L
+with emptier neighbors could win the stochastic rounding on several faces in one tick
+(~1e-8 per cell-tick; billions of opportunities) and go negative; the membrane
+effect's `take = min(4, spec_L)` then moved the −1 into the store; the membrane
+kernel's `max(0, ·)` clamp created the molecule. Three fixes, all tested:
+1. Diffusion outflow is now sequentially availability-capped per source cell,
+   symmetric-recomputable (`tests/…::test_diffusion_never_underflows_scarce_species`
+   fires the old bug thousands of times and stays exact).
+2. The silent membrane clamp is removed — a negative store now reaches the audit.
+3. New audit tripwire: any negative species count is a hard error.
+
+Also this session: solubility/precipitation added after the M0 tripwire showed
+unbounded brine concentration (evaporite bed, int64, audited, replay-exact).
+M0 restarted on the fixed code.
