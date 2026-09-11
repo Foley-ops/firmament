@@ -110,3 +110,19 @@ exactly like real polymerases — the reason palindromic sites survive replicati
 - Motor climbs the P~P gradient (chemotaxis toward energy).
 
 Full suite: 29 tests green (GPU; replay also on CPU backend).
+
+## Phase 6 — Instruments, lineage, milestones (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase6_instruments.py::TestMilestoneDetectors` — 9 detectors each fire on a synthetic fixture, stay silent on the null fixture, and fire exactly once: first_copy, fixation, mutant_100_generations, first_compartment, compartment_outcompetes, predation_like, aggregate_two_lineages, signal_correlation (needs 3 consecutive samples), non_metabolic_energy_flow (needs 5).
+- `test_novelty_detector_fixture_and_null` — never-seen motif combination flagged; silent on dead world.
+- `test_instruments_change_sim_state_by_zero_bytes` — 300 ticks with instruments attached vs without: every state array byte-identical (instruments receive numpy copies only; enforced by construction).
+- `test_seeded_run_produces_metrics_lineage_and_first_copy` — metrics parquet rows, lineage DB rows, first_copy + seed_placed in events.jsonl.
+
+**Bug the integration test caught (fixed in code):** milestones only saw copies that
+completed exactly on sampling ticks; the sampler now accumulates copy events every
+tick (host-side only) and delivers them at sample time.
+
+**Simplifications:** mutant-100-generations uses lineage depth of a mutated polymer;
+"living lineages" proxied by distinct sequence hashes; energy split (copy vs decay)
+estimated from lineage events × copy cost.

@@ -174,8 +174,11 @@ class Chemistry:
         h, w = state.shape
         wet = state.water_depth.numpy() > 1e-3
         spec = np.zeros((self.n_species, h, w), dtype=np.int32)
+        overrides = getattr(getattr(self, "cfg", None), "chemistry", None)
+        overrides = overrides.overrides if overrides else {}
         for name, sd in self.doc["species"].items():
             k = self.index[name]
+            sd = sd | overrides.get(name, {})     # M1-protocol environment tuning
             spec[k] = np.where(wet, sd.get("init_wet", 0), sd.get("init_dry", 0))
         state.species = wp.array(spec, dtype=wp.int32, device=state.device)
         log.info("species initialized", extra={"n_species": self.n_species, "wet_cells": int(wet.sum())})

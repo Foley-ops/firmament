@@ -33,6 +33,7 @@ class WorldCfg(BaseModel):
 class ChemistryCfg(BaseModel):
     file: str
     integer_counts: bool = True
+    overrides: dict[str, dict] = Field(default_factory=dict)   # per-species init overrides (M1 protocol env tuning)
 
 
 class PolymersCfg(BaseModel):

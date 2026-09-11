@@ -43,14 +43,18 @@ class Sampler:
         sched.metrics = self.writer
         self.mile = milestones.Milestones(sched)
         self.nov = novelty.Novelty(sched)
-        self.seed_hash = None
-        self.first_copy_seen = False
+        self.pending_copies: list = []       # accumulated EVERY tick so milestones
+                                             # never depend on sampling alignment
 
     def __call__(self, s, tick: int) -> None:
+        poly = getattr(self.sched, "poly", None)
+        if poly is not None and poly.recent_events:
+            self.pending_copies.extend(poly.recent_events)
         if tick % self.every != 0:
             return
-        poly = getattr(self.sched, "poly", None)
         view = ReadOnlyView.from_state(s, poly)
+        view["recent_copies"] = self.pending_copies
+        self.pending_copies = []
         self.sched.latest_view = view                      # GUI reads this cache
         row = {"tick": tick}
         row |= population.sample(view)
