@@ -205,3 +205,13 @@ kernel's `max(0, ·)` clamp created the molecule. Three fixes, all tested:
 Also this session: solubility/precipitation added after the M0 tripwire showed
 unbounded brine concentration (evaporite bed, int64, audited, replay-exact).
 M0 restarted on the fixed code.
+
+
+## Phase 7 correction — always-on GUI bridge (2026-09-11)
+
+The Operator flagged that the `--serve` opt-in violated writeup 4.10 (sims run
+headless 24/7 and the GUI attaches to ANY of them, never requiring a restart).
+Fixed: every sim now always exposes its read-only bridge on a free port recorded in
+meta.json (pid liveness-probed); the run picker lists all runs machine-wide and
+cross-attaches by redirecting to the target sim's own bridge. Viewer-independent
+cost is an idle socket; view work still happens only while viewers > 0.

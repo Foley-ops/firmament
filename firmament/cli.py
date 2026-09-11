@@ -53,8 +53,7 @@ def cmd_run(args):
     log.info("run created", extra={"config": str(args.config), "device": args.device})
     state, sched = build_sim(cfg, run_dir, args.device)
     _attach_io(cfg, run_dir, state, sched)
-    if args.serve:
-        _serve(sched, run_dir, args)
+    _serve(sched, run_dir, args)      # always on: the GUI attaches on demand
     _guarded_loop(sched, cfg, run_dir, state, args.ticks)
 
 
@@ -120,7 +119,7 @@ def cmd_resume(args):
     while True:
         cfg, state, sched = _load_from_snapshot(args, run_dir)
         get("cli").info("resumed", extra={"tick": state.tick, "attempt": attempts})
-        if args.serve:
+        if attempts == 0:
             _serve(sched, run_dir, args)
         try:
             _guarded_loop(sched, cfg, run_dir, state, args.ticks)
@@ -193,17 +192,45 @@ def cmd_inspect(args):
 
 
 def _serve(sched, run_dir, args):
+    """Always-on read-only bridge (writeup 4.10: sims run headless 24/7 and the GUI
+    attaches to ANY of them without touching the sim). An idle socket costs nothing;
+    view work only happens while a viewer is attached."""
+    import atexit
+    import os
+    import socket
     import threading
 
     import uvicorn
 
     from firmament.server.api import make_app
+
+    port = getattr(args, "port", 8000)
+    with socket.socket() as probe:                 # preferred port taken? use ephemeral
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            with socket.socket() as s2:
+                s2.bind(("", 0))
+                port = s2.getsockname()[1]
     app = make_app(sched, run_dir)
     t = threading.Thread(
-        target=uvicorn.run, kwargs=dict(app=app, host="0.0.0.0", port=args.port, log_level="warning"),
+        target=uvicorn.run, kwargs=dict(app=app, host="0.0.0.0", port=port, log_level="warning"),
         daemon=True)
     t.start()
-    get("cli").info("api serving", extra={"port": args.port})
+    run_dir_abs = Path(run_dir).resolve()
+    meta = rundir.read_meta(run_dir_abs)
+    meta["port"] = port
+    meta["pid"] = os.getpid()
+    rundir.write_meta(run_dir_abs, meta)
+
+    def _clear():
+        try:
+            m = rundir.read_meta(run_dir_abs)
+            m.pop("port", None)
+            m.pop("pid", None)
+            rundir.write_meta(run_dir_abs, m)
+        except OSError:
+            pass                      # best-effort exit cleanup; liveness probe covers stale pids
+    atexit.register(_clear)
+    get("cli").info("api serving", extra={"port": port})
 
 
 def main(argv=None):

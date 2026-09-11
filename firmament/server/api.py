@@ -95,6 +95,7 @@ def make_app(sched, run_dir: Path) -> FastAPI:
     # ---------- run picker / manager ----------
     @app.get("/api/runs")
     def runs():
+        import os
         out = []
         for m in rundir.list_runs():
             d = Path(m["dir"])
@@ -104,13 +105,22 @@ def make_app(sched, run_dir: Path) -> FastAPI:
             if evp.exists():
                 lines = evp.read_text().strip().splitlines()
                 ev = [json.loads(x) for x in lines[-3:]] if lines else []
-            status = "running" if m["run_id"] == run_dir.name else ("resumable" if snaps else "empty")
+            mine = m["run_id"] == run_dir.name
+            alive = mine
+            if not mine and m.get("pid"):
+                try:
+                    os.kill(m["pid"], 0)          # liveness probe, no signal sent
+                    alive = True
+                except (OSError, ProcessLookupError):
+                    alive = False
+            status = "running" if alive else ("resumable" if snaps else "empty")
             out.append({"run_id": m["run_id"], "status": status, "touched": m["touched"],
                         "parent": m["parent"], "snapshots": len(snaps),
+                        "port": m.get("port") if alive else None, "mine": mine,
                         "last_milestone": next((e["event"] for e in reversed(ev)
                                                 if e.get("component") == "milestones"), None),
-                        "tick": sched.state.tick if status == "running" else None,
-                        "tps": round(getattr(sched, "tps", 0.0), 1) if status == "running" else None})
+                        "tick": sched.state.tick if mine else None,
+                        "tps": round(getattr(sched, "tps", 0.0), 1) if mine else None})
         return out
 
     @app.get("/api/runs/{rid}/snapshots")

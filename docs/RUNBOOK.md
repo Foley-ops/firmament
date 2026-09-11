@@ -5,10 +5,14 @@ All commands from the repo root. `uv run python -m firmament.cli …` is aliased
 ## Start a new world
 ```bash
 firmament run --config configs/world_small.yaml            # 256², shakeout
-firmament run --config configs/world_default.yaml --serve  # 1024², with GUI API on :8000
+firmament run --config configs/world_default.yaml          # 1024²
 ```
 Creates `runs/<run_id>/` (frozen config, logs, snapshots, metrics, events, lineage).
-`--ticks N` bounds the run; omit for indefinite. `--serve --port P` exposes the GUI/API on the LAN.
+`--ticks N` bounds the run; omit for indefinite. **Every sim always exposes its
+read-only GUI bridge** (preferred `--port`, else an automatic free port, recorded in
+`meta.json`); open any running sim's port in a browser and the run picker lists every
+run on the machine — attaching to another running sim redirects to its own bridge.
+No restart is ever needed to view a world.
 
 ## Stop
 Ctrl-C (or kill). A shutdown snapshot is written on clean exit; an unclean kill loses
@@ -16,7 +20,7 @@ at most `snapshot_every_sim_days` of progress (resume from the last snapshot).
 
 ## Resume / long-run mode
 ```bash
-firmament resume --run <run_id> --serve --auto-restart
+firmament resume --run <run_id> --auto-restart
 ```
 `--auto-restart` = crash recovery: on any crash a `crash.json` is written (exception,
 tick, last good snapshot) and the run resumes automatically from the last snapshot,

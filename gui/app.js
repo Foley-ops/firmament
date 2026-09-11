@@ -23,8 +23,11 @@ async function loadRuns() {
     tr.innerHTML = `<td>${r.run_id}</td><td class="st-${r.status}">${r.status}</td>` +
       `<td>${r.tick ?? "—"}</td><td>${r.tps ?? "—"}</td><td>${r.last_milestone ?? "—"}</td>` +
       `<td>${r.touched ? "⚠ TOUCHED" : ""}</td><td>${r.snapshots}</td>` +
-      `<td>${r.status === "running" ? "<button>attach</button>" : "<span class=hint>resume via CLI to attach</span>"}</td>`;
-    if (r.status === "running") tr.querySelector("button").onclick = () => attach(r.run_id);
+      `<td>${r.status === "running" ? "<button>attach</button>" : "<span class=hint>resumable (firmament resume)</span>"}</td>`;
+    if (r.status === "running") tr.querySelector("button").onclick = () => {
+      if (r.mine) attach(r.run_id);
+      else window.location.href = `http://${location.hostname}:${r.port}/`;   // that sim's own bridge
+    };
     tb.appendChild(tr);
   }
 }
