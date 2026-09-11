@@ -424,6 +424,7 @@ class Fluid:
         self.key = mix(cfg.run.seed, SALT_TRANSPORT)
         self.b = None
         self.last_nsub = 0
+        self.graphs = {}
 
     def _bind(self, s):
         h, w = s.shape
@@ -438,6 +439,7 @@ class Fluid:
             "fx": wp.zeros((h, w), dtype=f64, device=dev),
             "fy": wp.zeros((h, w), dtype=f64, device=dev),
             "h0": wp.zeros((h, w), dtype=f64, device=dev),
+            "sed_new": wp.zeros((h, w), dtype=f64, device=dev),
             "row": wp.zeros(h, dtype=f64, device=dev),
             "mean": wp.zeros(1, dtype=f64, device=dev),
             "spec_new": None,
@@ -461,7 +463,9 @@ class Fluid:
                   device=s.device)
         cmax = float(np.max(b["row"].numpy()))
         need = int(math.ceil(dt * 1.3 * max(cmax, 0.05) / cfg.world.cell_meters))
-        n_sub = max(1, min(800, need))
+        # quantize to even multiples of 32: bounded set of CUDA graphs, and an even
+        # count returns the ping-pong buffers to their original bindings
+        n_sub = max(2, min(800, ((need + 31) // 32) * 32))
         if need > 800:
             log.warning("CFL substep cap hit — clamping loudly",
                         extra={"needed": need, "capped": 800})
@@ -474,16 +478,36 @@ class Fluid:
         b["fx"].zero_()
         b["fy"].zero_()
         wp.launch(k_get_t1, dim=s.shape, inputs=[s.temp, b["t1"]], device=s.device)
-        for _ in range(n_sub):
-            wp.launch(k_momentum, dim=s.shape, inputs=[s.water_depth, s.elevation, s.sediment,
-                      s.water_u, s.water_v, b["u_new"], b["v_new"], dts, h, w], device=s.device)
-            s.water_u, b["u_new"] = b["u_new"], s.water_u
-            s.water_v, b["v_new"] = b["v_new"], s.water_v
-            wp.launch(k_height, dim=s.shape, inputs=[s.water_depth, b["h_new"], s.elevation,
-                      s.sediment, s.water_u, s.water_v, b["t1"], b["t1_new"], b["fx"], b["fy"],
-                      dts, h, w], device=s.device)
-            s.water_depth, b["h_new"] = b["h_new"], s.water_depth
-            b["t1"], b["t1_new"] = b["t1_new"], b["t1"]
+
+        def substeps(record: bool):
+            # launches identical kernels in identical order whether recorded into a
+            # CUDA graph or run directly -> bit-identical results either way
+            for _ in range(n_sub):
+                wp.launch(k_momentum, dim=s.shape, inputs=[s.water_depth, s.elevation, s.sediment,
+                          s.water_u, s.water_v, b["u_new"], b["v_new"], dts, h, w], device=s.device)
+                s.water_u, b["u_new"] = b["u_new"], s.water_u
+                s.water_v, b["v_new"] = b["v_new"], s.water_v
+                wp.launch(k_height, dim=s.shape, inputs=[s.water_depth, b["h_new"], s.elevation,
+                          s.sediment, s.water_u, s.water_v, b["t1"], b["t1_new"], b["fx"], b["fy"],
+                          dts, h, w], device=s.device)
+                s.water_depth, b["h_new"] = b["h_new"], s.water_depth
+                b["t1"], b["t1_new"] = b["t1_new"], b["t1"]
+            # n_sub is even, so every ping-pong buffer is back at its original binding
+
+        if "cuda" in str(s.device):
+            g = self.graphs.get(n_sub)
+            if g is None:
+                wp.capture_begin(device=s.device)
+                try:
+                    substeps(record=True)
+                finally:
+                    g = wp.capture_end(device=s.device)
+                self.graphs[n_sub] = g
+                log.info("captured substep graph", extra={"n_sub": n_sub})
+            # capture RECORDS without executing — the graph must run this tick too
+            wp.capture_launch(g)
+        else:
+            substeps(record=False)
         wp.launch(k_copy_t1, dim=s.shape, inputs=[b["t1"], s.temp], device=s.device)
 
         # vapor lateral mixing (turbulent boundary layer analog), exactly conservative
@@ -493,9 +517,11 @@ class Fluid:
         wp.launch(k_vapor_mix, dim=s.shape, inputs=[s.vapor, b["mean"], wp.float64(0.12),
                   wp.float64(h * w)], device=s.device)
 
+        # copy-back, not swap: the substep CUDA graph holds fixed array pointers, so
+        # state arrays it references must never trade places with scratch buffers
         wp.launch(k_erosion, dim=s.shape, inputs=[s.water_depth, s.water_u, s.water_v,
-                  s.sediment, b["h_new"], wp.float64(dt), h, w], device=s.device)
-        s.sediment, b["h_new"] = b["h_new"], s.sediment
+                  s.sediment, b["sed_new"], wp.float64(dt), h, w], device=s.device)
+        wp.copy(s.sediment, b["sed_new"])
 
         # dissolved species: advect with accumulated water fluxes, then diffuse
         ns = s.n_species
