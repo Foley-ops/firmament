@@ -170,6 +170,16 @@ def make_app(sched, run_dir: Path) -> FastAPI:
     def inspect_cell(x: int, y: int):
         s = sched.state
         chem = sched.chem
+        lock = getattr(s, "gpu_lock", None)
+        if lock:
+            lock.acquire()
+        try:
+            return _inspect_cell_inner(s, chem, x, y)
+        finally:
+            if lock:
+                lock.release()
+
+    def _inspect_cell_inner(s, chem, x: int, y: int):
         spec = s.species.numpy()[:, y, x]
         alive = s.p_state.numpy() > 0
         here = np.nonzero(alive & (s.p_cell.numpy() == y * s.shape[1] + x))[0]
@@ -187,6 +197,10 @@ def make_app(sched, run_dir: Path) -> FastAPI:
 
     @app.get("/api/inspect/polymer")
     def inspect_polymer(id: int):
+        with getattr(sched.state, "gpu_lock", None) or __import__("threading").Lock():
+            return _inspect_polymer_inner(id)
+
+    def _inspect_polymer_inner(id: int):
         s = sched.state
         ids = s.p_id.numpy()
         slots = np.nonzero((ids == id) & (s.p_state.numpy() > 0))[0]
@@ -213,6 +227,10 @@ def make_app(sched, run_dir: Path) -> FastAPI:
 
     @app.get("/api/lineage/tree")
     def lineage_tree(limit: int = 2000):
+        with getattr(sched.state, "gpu_lock", None) or __import__("threading").Lock():
+            return _lineage_tree_inner(limit)
+
+    def _lineage_tree_inner(limit: int = 2000):
         s = sched.state
         alive = np.nonzero(s.p_state.numpy() > 0)[0][:limit]
         return [{"id": int(s.p_id.numpy()[p]), "parent": int(s.p_parent.numpy()[p]),

@@ -15,17 +15,21 @@ function colormap(t) {
 
 /* ---------- run picker ---------- */
 async function loadRuns() {
-  const runs = await (await fetch("/api/runs")).json();
+  const [runs, my] = await Promise.all([
+    (await fetch("/api/runs")).json(),
+    (await fetch("/api/meta")).json(),
+  ]);
   const tb = $("run-table").querySelector("tbody");
   tb.innerHTML = "";
   for (const r of runs) {
+    const isMine = r.mine ?? (r.run_id === my.run_id);   // tolerate older servers
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${r.run_id}</td><td class="st-${r.status}">${r.status}</td>` +
       `<td>${r.tick ?? "—"}</td><td>${r.tps ?? "—"}</td><td>${r.last_milestone ?? "—"}</td>` +
       `<td>${r.touched ? "⚠ TOUCHED" : ""}</td><td>${r.snapshots}</td>` +
       `<td>${r.status === "running" ? "<button>attach</button>" : "<span class=hint>resumable (firmament resume)</span>"}</td>`;
     if (r.status === "running") tr.querySelector("button").onclick = () => {
-      if (r.mine) attach(r.run_id);
+      if (isMine || !r.port) attach(r.run_id);
       else window.location.href = `http://${location.hostname}:${r.port}/`;   // that sim's own bridge
     };
     tb.appendChild(tr);

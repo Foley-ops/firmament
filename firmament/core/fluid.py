@@ -497,11 +497,14 @@ class Fluid:
         if "cuda" in str(s.device):
             g = self.graphs.get(n_sub)
             if g is None:
-                wp.capture_begin(device=s.device)
-                try:
-                    substeps(record=True)
-                finally:
-                    g = wp.capture_end(device=s.device)
+                # stream capture forbids ANY other GPU call on this stream: hold the
+                # lock so the API thread's array reads cannot land inside the window
+                with s.gpu_lock:
+                    wp.capture_begin(device=s.device)
+                    try:
+                        substeps(record=True)
+                    finally:
+                        g = wp.capture_end(device=s.device)
                 self.graphs[n_sub] = g
                 log.info("captured substep graph", extra={"n_sub": n_sub})
             # capture RECORDS without executing — the graph must run this tick too

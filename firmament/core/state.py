@@ -5,6 +5,8 @@ species counts i32 (exact conservation), sequences u8.
 """
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import warp as wp
 
@@ -62,6 +64,7 @@ class State:
         self.next_poly_id = 1                # 0 reserved; seed gets id 1
 
         self.tick = 0
+        self.gpu_lock = threading.Lock()   # serializes graph capture vs API-thread reads
 
     # ---- host access helpers ----
     def field_names(self) -> list[str]:
