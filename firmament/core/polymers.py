@@ -210,26 +210,26 @@ def k_cell_pass(
                             best = ni * W + nj
                 p_motor[p] = best
             elif eff == 6:             # emit: force `strength` events of the target reaction
-                r = m_target[m]
+                rx = m_target[m]
                 ev = int(m_strength[m])
                 for u in range(max_sub):
-                    s = sub_s[r, u]
-                    if s < 0:
+                    su = sub_s[rx, u]
+                    if su < 0:
                         break
-                    avail = spec[s, i, j] // sub_c[r, u]
+                    avail = spec[su, i, j] // sub_c[rx, u]
                     if ev > avail:
                         ev = avail
                 if ev > 0:
                     for u in range(max_sub):
-                        s = sub_s[r, u]
-                        if s < 0:
+                        su = sub_s[rx, u]
+                        if su < 0:
                             break
-                        spec[s, i, j] -= sub_c[r, u] * ev
+                        spec[su, i, j] -= sub_c[rx, u] * ev
                     for u in range(max_sub):
-                        s = prod_s[r, u]
-                        if s < 0:
+                        su = prod_s[rx, u]
+                        if su < 0:
                             break
-                        spec[s, i, j] += prod_c[r, u] * ev
+                        spec[su, i, j] += prod_c[rx, u] * ev
 
         # ---- templated copying: progress one monomer
         if stt == P_COPYING:
@@ -258,6 +258,10 @@ def k_cell_pass(
                 tl = p_len[tmpl]
                 clen = p_len[child]
                 if pos < tl and clen < l_max:
+                    # antiparallel synthesis (real polymerases read the template
+                    # 3'->5'): child = reverse complement, so reverse-complement-
+                    # palindromic motifs survive copying with function intact
+
                     r = wp.float64(wp.randf(st))
                     er = wp.float64(mut_rate)
                     typ = int(0)
@@ -275,7 +279,7 @@ def k_cell_pass(
                         typ = 1 + wp.min(int(wp.randf(st) * wp.float32(4.0)), 3)
                         mut = 1
                     else:
-                        typ = complement(int(p_seq[tmpl, pos]))
+                        typ = complement(int(p_seq[tmpl, tl - 1 - pos]))
                     if grow == 1:
                         im = IM1 + typ - 1
                         if spec[im, i, j] > 0 and spec[IPP, i, j] >= e_copy:

@@ -54,7 +54,8 @@ def _apply(sched, event: str, params: dict, event_n: int) -> None:
         vap[mask] += amount
         s.vapor = wp.array(vap, dtype=wp.float64, device=s.device)
         if aud:
-            aud.register_injection(water=amount * mask.sum())
+            aud.register_injection(water=amount * mask.sum(),
+                                   energy=amount * mask.sum() * (2.5e6 + 4186.0 * 288.0))
     elif event == "drought":               # dry air mass replaces the column
         f = float(params.get("strength", 0.5))
         vap = s.vapor.numpy()
@@ -62,15 +63,18 @@ def _apply(sched, event: str, params: dict, event_n: int) -> None:
         vap[mask] *= 1.0 - f
         s.vapor = wp.array(vap, dtype=wp.float64, device=s.device)
         if aud:
-            aud.register_injection(water=-removed)
+            aud.register_injection(water=-removed,
+                                   energy=-removed * (2.5e6 + 4186.0 * 288.0))
     elif event == "flood":
         rise = float(params.get("rise_m", 0.5))
         wd = s.water_depth.numpy()
         wd[mask] += rise
         s.water_depth = wp.array(wd, dtype=wp.float64, device=s.device)
         if aud:
+            # flood water arrives at the local surface temperature: exact stored delta
+            t1 = s.temp.numpy()[1]
             aud.register_injection(water=rise * mask.sum() * 1000.0,
-                                   energy=rise * mask.sum() * 4.186e6 * 288.0)
+                                   energy=float((rise * 4.186e6 * t1[mask]).sum()))
     elif event == "earthquake":
         mag = float(params.get("magnitude_m", 1.0))
         el = s.elevation.numpy()

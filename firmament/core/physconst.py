@@ -12,5 +12,7 @@ H_AIR_SURF = 15.0           # W/m^2 K sensible exchange
 H_SURF_SED = 3.0            # W/m^2 K conduction across interface
 K_HORIZ = 2.0               # W/K per face — lateral conduction (rock k~2 W/mK, 1 m cell)
 LV = 2.5e6                  # J/kg latent heat of vaporization
+CW_SP = 4186.0              # J/kg K specific heat of water
+T_REF = 288.0               # K reference temperature for vapor enthalpy bookkeeping
 G = 9.81                    # m/s^2
 RHO_W = 1000.0              # kg/m^3

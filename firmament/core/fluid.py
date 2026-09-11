@@ -150,11 +150,17 @@ def k_height(hw: wp.array2d(dtype=wp.float64), h_new: wp.array2d(dtype=wp.float6
 @wp.kernel
 def k_evap_rain(hw: wp.array2d(dtype=wp.float64), vapor: wp.array2d(dtype=wp.float64),
                 temp: wp.array3d(dtype=wp.float64), dt: wp.float64):
+    """Phase change with EXACT energy books: every kg of vapor carries the fixed
+    enthalpy LV + CW_SP*T_REF; the sensible deviation stays in the source layer.
+    (The surface layer's capacity changes with depth, so the departing/arriving
+    water's energy must move explicitly or the audit leaks — it did, once.)"""
     i, j = wp.tid()
     t0 = temp[0, i, j]
     t1 = temp[1, i, j]
     d = hw[i, j]
-    c1 = wp.float64(pc.C_SURF_DRY) + wp.float64(pc.CW_VOL) * d
+    cs = wp.float64(pc.C_SURF_DRY)
+    cw = wp.float64(pc.CW_VOL)
+    h_vap = wp.float64(pc.LV) + wp.float64(pc.CW_SP) * wp.float64(pc.T_REF)  # J/kg
     # evaporation from wet cells, limited by available water and humidity deficit
     if d > wp.float64(H_MIN):
         deficit = qsat(t1) - vapor[i, j]
@@ -163,17 +169,21 @@ def k_evap_rain(hw: wp.array2d(dtype=wp.float64), vapor: wp.array2d(dtype=wp.flo
             evmax = d * wp.float64(pc.RHO_W)
             if ev > evmax:
                 ev = evmax
-            hw[i, j] = d - ev / wp.float64(pc.RHO_W)
+            dn = d - ev / wp.float64(pc.RHO_W)
+            t1 = (( cs + cw * d) * t1 - ev * h_vap) / (cs + cw * dn)
+            d = dn
+            hw[i, j] = dn
             vapor[i, j] = vapor[i, j] + ev
-            # latent heat leaves the surface layer (evaporative cooling)
-            temp[1, i, j] = t1 - ev * wp.float64(pc.LV) / c1
+            temp[1, i, j] = t1
     # rain where the air column is supersaturated
     ex = vapor[i, j] - qsat(t0)
     if ex > wp.float64(0.0):
         rain = ex * wp.float64(RAIN_FRAC)
         vapor[i, j] = vapor[i, j] - rain
-        hw[i, j] = hw[i, j] + rain / wp.float64(pc.RHO_W)
-        # condensation releases latent heat into the air layer
+        dn = d + rain / wp.float64(pc.RHO_W)
+        # water lands with sensible CW_SP*T_REF; latent heat releases into the air
+        temp[1, i, j] = ((cs + cw * d) * t1 + rain * wp.float64(pc.CW_SP) * wp.float64(pc.T_REF)) / (cs + cw * dn)
+        hw[i, j] = dn
         temp[0, i, j] = t0 + rain * wp.float64(pc.LV) / wp.float64(pc.C_AIR)
 
 

@@ -63,8 +63,9 @@ class Audit:
         d = s.water_depth.numpy()
         c1 = pc.C_SURF_DRY + pc.CW_VOL * d
         stored = (pc.C_AIR * t[0] + c1 * t[1] + pc.C_SED * t[2]).sum()
-        latent = float(s.vapor.numpy().sum()) * pc.LV
-        return float(stored) + latent
+        # vapor carries fixed enthalpy LV + CW_SP*T_REF per kg (see fluid.k_evap_rain)
+        vap_enthalpy = float(s.vapor.numpy().sum()) * (pc.LV + pc.CW_SP * pc.T_REF)
+        return float(stored) + vap_enthalpy
 
     def step(self, s, tick: int) -> None:
         if tick % self.every != 0:

@@ -70,8 +70,9 @@ class Radiation:
 
     def _bind(self, state) -> None:
         h, w = state.shape
-        state.e_in = wp.zeros((h, w), dtype=wp.float64, device=state.device)
-        state.e_out = wp.zeros((h, w), dtype=wp.float64, device=state.device)
+        if not hasattr(state, "e_in"):        # a loaded snapshot restores these already
+            state.e_in = wp.zeros((h, w), dtype=wp.float64, device=state.device)
+            state.e_out = wp.zeros((h, w), dtype=wp.float64, device=state.device)
         self.bound = True
 
     def step(self, state, tick: int) -> None:

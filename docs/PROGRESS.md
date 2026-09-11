@@ -73,3 +73,40 @@ flows; full pipeline at 256² ≈ 51 tps.
 - Dissolved reactive H2O is a conserved integer species; bulk water_depth is the inert solvent (water activity vs bulk phase). No vent outgassing in v0 — element totals strictly closed.
 
 **Benchmarks:** chemistry kernel (30 reactions, serial per cell) adds ~1 ms/tick at 32².
+
+## Phase 4 — Snapshot, replay, determinism (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase4_replay.py::test_replay_bit_identical[cpu]` and `[cuda:0]` — run 500 → snapshot A → run 500 → B; fresh sim resumed from A runs 500 → B'. Every state array matches B byte-for-byte on BOTH backends. This test blocks everything after it.
+- `tests/test_phase4_replay.py::test_fork_first_snapshot_equals_parent` — fork gets a new run_id, parent pointer, and a first snapshot identical to the parent's, loadable into a fresh sim.
+
+**Bug the replay test caught (fixed in code):** evaporation/rain changed the surface
+layer's heat capacity without moving the water's sensible heat — an 8.8% energy audit
+leak on the full pipeline. Fix: vapor carries fixed enthalpy LV + c_w·T_ref per kg;
+phase changes move exact energy; audit's stored term includes vapor enthalpy.
+Console rain/drought/flood events register the same ledger.
+
+## Phase 5 — Polymers (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase5_polymers.py::TestCopyGating::test_copies_with_resources` — replicase + monomers + P~P → copies (lineage rows written).
+- `TestCopyGating::test_no_copy_without_energy` / `test_no_copy_without_monomers` — binding may occur but no child monomer is ever added.
+- `TestCopyGating::test_copy_stalls_and_resumes` — starvation stalls a copy; refeeding finishes it.
+- `test_motif_scan_matches_hand_computed` — kernel motif mask equals a hand-built truth table; child verified to be the template's REVERSE complement.
+- `test_measured_mutation_rate_matches_epsilon` — 60k+ copied monomers at ε=0.02; observed mutations within 4σ binomial.
+- `test_audits_hold_with_life` — element totals exact to the integer with polymers copying/dying (chain unit = M − H2O); energy books close (Δstored == e_chem exactly).
+- `test_replay_bit_identical_with_polymers` — the Phase 4 protocol, seeded.
+
+**Bug the motif test caught (fixed in code):** copying was building the PARALLEL
+complement, which mirrors reverse-complement-palindromic motifs and would have lost
+function every generation. Fix: antiparallel synthesis (child = reverse complement),
+exactly like real polymerases — the reason palindromic sites survive replication.
+
+**Simplifications vs writeup** (real analog preserved):
+- Deterministic per-cell serial competition in polymer-id order (physics is
+  observer-order-independent; GPU scheduling must be too).
+- Compartments are cell-granular bags: membrane L accretes per cell, splits overflow
+  to the L-richest neighbor (budding), compartment id gates diffusion/transport.
+- Motor climbs the P~P gradient (chemotaxis toward energy).
+
+Full suite: 29 tests green (GPU; replay also on CPU backend).

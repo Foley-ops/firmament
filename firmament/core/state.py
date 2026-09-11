@@ -71,8 +71,12 @@ class State:
 
     def load_numpy(self, arrays: dict[str, np.ndarray]) -> None:
         for k, arr in arrays.items():
-            dst = getattr(self, k)
-            wp.copy(dst, wp.array(np.ascontiguousarray(arr), dtype=dst.dtype, device=self.device))
+            dst = getattr(self, k, None)
+            if dst is None:
+                # lazily-allocated field (e.g. e_in/e_out before radiation's first step)
+                setattr(self, k, wp.array(np.ascontiguousarray(arr), device=self.device))
+            else:
+                wp.copy(dst, wp.array(np.ascontiguousarray(arr), dtype=dst.dtype, device=self.device))
 
     def nbytes(self) -> int:
         return sum(getattr(self, k).capacity for k in self.field_names())
