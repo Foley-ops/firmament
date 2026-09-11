@@ -47,8 +47,12 @@ class Audit:
     # ---- totals ----
     def element_totals(self, s) -> np.ndarray:
         spec = s.species.numpy().astype(np.int64)
-        # tripwire on the DISSOLVED phase only (the precipitate store is int64 and
-        # may grow without bound — that is the evaporite bed, not an overflow risk)
+        # tripwires: negative counts (availability bug) and near-wrap concentration
+        low = int(spec.min())
+        if low < 0:
+            k = int(np.unravel_index(spec.argmin(), spec.shape)[0])
+            raise AuditError(f"species '{self.chem.names[k]}' went NEGATIVE ({low}) — "
+                             "an unclamped consumer or transport underflow")
         peak = int(spec.max())
         if peak > 1_600_000_000:
             k = int(np.unravel_index(spec.argmax(), spec.shape)[0])

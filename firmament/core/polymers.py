@@ -447,8 +447,8 @@ def k_membrane(store_old: wp.array2d(dtype=wp.int32), store_new: wp.array2d(dtyp
         if has == 0:
             loss = 0
     ns = s - dec - loss + gain
-    if ns < 0:
-        ns = 0
+    # no silent clamp: a negative store is a conservation bug and must reach the
+    # audit as a loud error (a clamp here once manufactured one L molecule)
     store_new[i, j] = ns
     spec[IL, i, j] = spec[IL, i, j] + dec
     if ns > MEM_THRESH:

@@ -324,18 +324,43 @@ def k_species_advect(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dtyp
 
 
 @wp.func
-def diff_pair(spec: wp.array3d(dtype=wp.int32), s: int, ai: int, aj: int, bi: int, bj: int,
-              hw: wp.array2d(dtype=wp.float64), seed: wp.int32,
-              face_id: wp.int32) -> int:
-    """Net signed diffusion A->B (symmetric pure function; one rng draw per face)."""
-    if hw[ai, aj] < wp.float64(H_MIN) or hw[bi, bj] < wp.float64(H_MIN):
+def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: int,
+             hw: wp.array2d(dtype=wp.float64), seed: wp.int32,
+             H: int, W: int, ns: int) -> int:
+    """Availability-capped diffusion OUTFLOW of species s from (ci,cj) through
+    `face` (0=right,1=left,2=down,3=up). Sequential cap over the cell's faces in
+    fixed order, so total outflow never exceeds the cell's count; recomputable
+    identically from either side of the face (pure in old spec + rng key)."""
+    n = spec[s, ci, cj]
+    if n <= 0 or hw[ci, cj] < wp.float64(H_MIN):
         return 0
-    d = spec[s, ai, aj] - spec[s, bi, bj]
-    st = wp.rand_init(seed, face_id)
-    x = wp.float64(d) * wp.float64(DIFF_FRAC)
-    if x >= wp.float64(0.0):
-        return stoch_round(x, st)
-    return -stoch_round(-x, st)
+    taken = int(0)
+    for k in range(4):
+        ni = ci
+        nj = cj
+        if k == 0:
+            nj = cj + 1
+        elif k == 1:
+            nj = cj - 1
+        elif k == 2:
+            ni = ci + 1
+        else:
+            ni = ci - 1
+        if ni < 0 or nj < 0 or ni >= H or nj >= W:
+            continue
+        if hw[ni, nj] < wp.float64(H_MIN):
+            continue
+        d = n - spec[s, ni, nj]
+        if d <= 0:
+            continue
+        st = wp.rand_init(seed, wp.int32(((ci * W + cj) * 4 + k) * ns + s))
+        amt = stoch_round(wp.float64(d) * wp.float64(DIFF_FRAC), st)
+        if amt > n - taken:
+            amt = n - taken
+        if k == face:
+            return amt
+        taken += amt
+    return 0
 
 
 @wp.kernel
@@ -344,16 +369,19 @@ def k_species_diffuse(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dty
                       H: int, W: int, ns: int):
     s, i, j = wp.tid()
     n = spec[s, i, j]
-    net = int(0)
+    out = int(0)
+    for k in range(4):
+        out += diff_out(spec, s, i, j, k, hw, seed, H, W, ns)
+    inn = int(0)
     if j + 1 < W:
-        net -= diff_pair(spec, s, i, j, i, j + 1, hw, seed, wp.int32(((i * W + j) * 2 + 0) * ns + s))
+        inn += diff_out(spec, s, i, j + 1, 1, hw, seed, H, W, ns)
     if j - 1 >= 0:
-        net += diff_pair(spec, s, i, j - 1, i, j, hw, seed, wp.int32(((i * W + j - 1) * 2 + 0) * ns + s))
+        inn += diff_out(spec, s, i, j - 1, 0, hw, seed, H, W, ns)
     if i + 1 < H:
-        net -= diff_pair(spec, s, i, j, i + 1, j, hw, seed, wp.int32(((i * W + j) * 2 + 1) * ns + s))
+        inn += diff_out(spec, s, i + 1, j, 3, hw, seed, H, W, ns)
     if i - 1 >= 0:
-        net += diff_pair(spec, s, i - 1, j, i, j, hw, seed, wp.int32((((i - 1) * W + j) * 2 + 1) * ns + s))
-    spec_new[s, i, j] = n + net
+        inn += diff_out(spec, s, i - 1, j, 2, hw, seed, H, W, ns)
+    spec_new[s, i, j] = n - out + inn
 
 
 @wp.kernel

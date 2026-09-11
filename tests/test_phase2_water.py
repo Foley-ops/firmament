@@ -131,3 +131,28 @@ def test_solubility_precipitation_and_redissolution(tmp_path, device):
     for _ in range(5):
         sched.tick_once()
     assert int(state.precipitate.numpy()[idx, y, x]) < before
+
+
+def test_diffusion_never_underflows_scarce_species(tmp_path, device):
+    """Regression for the one-L-molecule audit violation: a cell holding a single
+    count with emptier neighbors must never diffuse below zero (the old signed
+    per-face rounding could win on several faces at once). Checkerboard of 1s
+    over thousands of ticks makes the old bug fire thousands of times."""
+    cfg, state, sched = _water_sim(tmp_path, device, n=32)
+    idx = sched.chem.index["L"]
+    spec = state.species.numpy()
+    ones = np.indices((32, 32)).sum(axis=0) % 2 == 0
+    spec[idx][:] = 0
+    spec[idx][ones & (state.water_depth.numpy() > 1e-3)] = 1
+    state.species = wp.array(spec, dtype=wp.int32, device=state.device)
+    total0 = int(state.species.numpy()[idx].astype(np.int64).sum())
+    assert total0 > 50
+    for t in range(2000):
+        sched.tick_once()
+        if t % 200 == 0:
+            l = state.species.numpy()[idx]
+            assert l.min() >= 0, f"L underflow at tick {t}: min {l.min()}"
+    l = state.species.numpy()[idx].astype(np.int64)
+    pr = state.precipitate.numpy()[idx]
+    assert l.min() >= 0
+    assert int(l.sum()) + int(pr.sum()) == total0, "L not conserved under diffusion"
