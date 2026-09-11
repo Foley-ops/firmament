@@ -102,3 +102,32 @@ def test_substep_count_logged_on_change(tmp_path, device, caplog):
             sched.tick_once()
     msgs = [r.message for r in caplog.records]
     assert any("substep count changed" in m for m in msgs)
+
+
+def test_solubility_precipitation_and_redissolution(tmp_path, device):
+    """Dissolved counts above the solubility cap precipitate to the immobile store
+    (evaporite analog) and redissolve when under-saturated; totals exact."""
+    from firmament.core.fluid import SAT_CAP
+
+    cfg, state, sched = _water_sim(tmp_path, device, n=16)
+    idx = sched.chem.index["Pi"]
+    spec = state.species.numpy()
+    wet = np.argwhere(state.water_depth.numpy() > 0.1)
+    y, x = (int(v) for v in wet[0])
+    spec[idx, y, x] = SAT_CAP * 3   # far past saturation: one tick of advection cannot rescue it
+    state.species = wp.array(spec, dtype=wp.int32, device=state.device)
+    total0 = int(spec[idx].astype(np.int64).sum()) + int(state.precipitate.numpy()[idx].astype(np.int64).sum())
+    sched.tick_once()
+    sp = state.species.numpy()[idx]
+    pr = state.precipitate.numpy()[idx]
+    assert sp[y, x] <= SAT_CAP
+    assert pr[y, x] > 0                                  # excess precipitated
+    assert int(sp.astype(np.int64).sum()) + int(pr.astype(np.int64).sum()) == total0
+    # drain the dissolved phase; the mineral must start redissolving
+    sp2 = state.species.numpy()
+    sp2[idx, y, x] = 0
+    state.species = wp.array(sp2, dtype=wp.int32, device=state.device)
+    before = int(state.precipitate.numpy()[idx, y, x])
+    for _ in range(5):
+        sched.tick_once()
+    assert int(state.precipitate.numpy()[idx, y, x]) < before

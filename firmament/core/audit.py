@@ -47,6 +47,8 @@ class Audit:
     # ---- totals ----
     def element_totals(self, s) -> np.ndarray:
         spec = s.species.numpy().astype(np.int64)
+        if hasattr(s, "precipitate"):
+            spec = spec + s.precipitate.numpy().astype(np.int64)
         # tripwire: dissolved concentration approaching int32 wrap = unmodeled
         # solubility. Pause loudly rather than ever wrapping silently.
         peak = int(spec.max())

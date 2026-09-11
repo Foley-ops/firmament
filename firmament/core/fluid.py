@@ -26,6 +26,8 @@ K_EVAP = 3e-6         # kg/m^2/s per kg/m^2 humidity deficit (ocean ~5 mm/day)
 RAIN_FRAC = 0.1       # fraction of supersaturation raining out per tick
 DIFF_FRAC = 0.01      # per-face species exchange per tick in connected water
 ERO_RATE = 1e-6       # sediment m per (m/s)^3 per s
+SAT_CAP = 500_000_000  # counts/cell solubility limit; excess precipitates (evaporites)
+REDISSOLVE = 0.01     # fraction of the unsaturated deficit redissolving per tick
 
 
 @wp.func
@@ -355,6 +357,27 @@ def k_species_diffuse(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dty
 
 
 @wp.kernel
+def k_precipitate(spec: wp.array3d(dtype=wp.int32), precip: wp.array3d(dtype=wp.int32),
+                  hw: wp.array2d(dtype=wp.float64)):
+    """Solubility: dissolved counts above SAT_CAP precipitate to an immobile store;
+    redissolution when under-saturated and wet. Deterministic integer moves."""
+    s, i, j = wp.tid()
+    n = spec[s, i, j]
+    if n > SAT_CAP:
+        ex = n - SAT_CAP
+        spec[s, i, j] = SAT_CAP
+        precip[s, i, j] = precip[s, i, j] + ex
+    elif precip[s, i, j] > 0 and hw[i, j] > wp.float64(H_MIN):
+        room = SAT_CAP - n
+        back = int(wp.float64(room) * wp.float64(REDISSOLVE))
+        if back > precip[s, i, j]:
+            back = precip[s, i, j]
+        if back > 0:
+            precip[s, i, j] = precip[s, i, j] - back
+            spec[s, i, j] = n + back
+
+
+@wp.kernel
 def k_copy_t1(t1: wp.array2d(dtype=wp.float64), temp: wp.array3d(dtype=wp.float64)):
     i, j = wp.tid()
     temp[1, i, j] = t1[i, j]
@@ -457,3 +480,5 @@ class Fluid:
                   wp.int32(seed32(self.key, tick, 1)), h, w, ns],
                   device=s.device)
         s.species, b["spec_new"] = b["spec_new"], s.species
+        wp.launch(k_precipitate, dim=(ns, h, w), inputs=[s.species, s.precipitate, s.water_depth],
+                  device=s.device)

@@ -36,6 +36,7 @@ class State:
         self.light_water = z(f32, (h, w))    # W/m^2 at bottom of water column
         self.species = z(i32, (n_species, h, w))
         self.compartment_id = z(i32, (h, w))
+        self.precipitate = z(i32, (n_species, h, w))  # evaporite store (solubility cap)
         self.catalyst = None                 # (n_reactions, h, w) f32 — allocated by chemistry
         self.vent_flux = z(f32, (h, w))      # W/m^2 geothermal, set by terrain
         self.albedo_dust = z(f32, (h, w))    # meteor/volcano dust, raises albedo, decays
