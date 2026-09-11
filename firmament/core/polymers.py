@@ -175,12 +175,14 @@ def k_cell_pass(
             spec[IPI, i, j] += 2 * cost
             heat += wp.float64(0.033) * wp.float64(cost)
             if eff == 1:               # catalyst[R]
-                cat[m_target[m], i, j] = cat[m_target[m], i, j] + wp.float32(wp.float64(m_strength[m]) * gate)
+                add = wp.float32(wp.float64(m_strength[m]) * gate)
+                cat[m_target[m], i, j] = cat[m_target[m], i, j] + add
             elif eff == 2:             # binder -> aggregate
                 if p_partner[p] < 0:
                     for q2 in range(q + 1, s1):
                         p2 = order[q2]
-                        if int(p_state[p2]) == P_FREE and p_partner[p2] < 0 and (p_motifs[p2] & (1 << m)) != 0:
+                        p2ok = int(p_state[p2]) == P_FREE and p_partner[p2] < 0
+                        if p2ok and (p_motifs[p2] & (1 << m)) != 0:
                             p_partner[p] = p2
                             p_partner[p2] = p
                             break
@@ -610,15 +612,18 @@ class Polymers:
             log.error("polymer capacity exhausted", extra={"live": n_live, "cap": s.p_cap})
             raise RuntimeError("polymer capacity exhausted — raise polymers.capacity")
         dev = s.device
-        wp.copy(self.g_order, wp.array(np.ascontiguousarray(order), dtype=wp.int32, device=dev), count=len(order))
+        wp.copy(self.g_order, wp.array(np.ascontiguousarray(order), dtype=wp.int32, device=dev),
+                count=len(order))
         wp.copy(self.g_cell_start, wp.array(cell_start, dtype=wp.int32, device=dev))
         wp.copy(self.g_cell_base, wp.array(cell_base, dtype=wp.int32, device=dev))
         if total_res:
-            wp.copy(self.g_free, wp.array(np.ascontiguousarray(free[:total_res]), dtype=wp.int32, device=dev), count=total_res)
+            wp.copy(self.g_free, wp.array(np.ascontiguousarray(free[:total_res]), dtype=wp.int32,
+                    device=dev), count=total_res)
 
         s.catalyst.zero_()
         self.g_ev_n.zero_()
-        wp.launch(k_snapshot_plane, dim=s.shape, inputs=[s.species, self.idx["PP"], self.g_pp_pre], device=dev)
+        wp.launch(k_snapshot_plane, dim=s.shape, inputs=[s.species, self.idx["PP"], self.g_pp_pre],
+                  device=dev)
 
         cfgp = self.cfg.polymers
         wp.launch(k_cell_pass, dim=ncell, inputs=[

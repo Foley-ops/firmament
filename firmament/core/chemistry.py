@@ -146,7 +146,7 @@ class Chemistry:
         self.cfg = cfg
         self.key = mix(cfg.run.seed, SALT_CHEM)
         dev = state.device
-        nr, ns = self.n_react, self.n_species
+        nr = self.n_react
         h, w = state.shape
         sub_s = np.full((nr, MAX_SUB), -1, dtype=np.int32)
         sub_c = np.zeros((nr, MAX_SUB), dtype=np.int32)
@@ -163,8 +163,10 @@ class Chemistry:
         self.g_k300 = arr(np.array([r["k300"] for r in self.reactions], np.float32), wp.float32)
         self.g_ea = arr(np.array([r["ea"] for r in self.reactions], np.float32), wp.float32)
         self.g_dh = arr(np.array([r["dh"] for r in self.reactions], np.float32), wp.float32)
-        self.g_photo = arr(np.array([1 if r.get("photo") else 0 for r in self.reactions], np.int32), wp.int32)
-        self.g_catz = arr(np.array([1 if r.get("catalyzable") else 0 for r in self.reactions], np.int32), wp.int32)
+        photo = np.array([1 if r.get("photo") else 0 for r in self.reactions], np.int32)
+        catz = np.array([1 if r.get("catalyzable") else 0 for r in self.reactions], np.int32)
+        self.g_photo = arr(photo, wp.int32)
+        self.g_catz = arr(catz, wp.int32)
         state.catalyst = wp.zeros((nr, h, w), dtype=wp.float32, device=dev)
         state.e_chem = wp.zeros((h, w), dtype=wp.float64, device=dev)
         self.dt_scale = 1.0  # k300 is already per-tick
@@ -185,6 +187,13 @@ class Chemistry:
 
     def step(self, state, tick: int) -> None:
         h, w = state.shape
+        # dead-era acceleration: no living polymers -> coarser chemistry stepping.
+        # Pure function of current state (replayable); logged as a mode change.
+        scale = 10.0 if getattr(state, "p_count", 0) == 0 else 1.0
+        if scale != self.dt_scale:
+            reason = "dead-era" if scale > 1 else "life present"
+            log.info("chemistry dt mode change", extra={"dt_scale": scale, "reason": reason})
+            self.dt_scale = scale
         wp.launch(k_chemistry, dim=(h, w), inputs=[
             state.species, state.temp, state.light_water, state.catalyst, state.e_chem,
             state.water_depth,

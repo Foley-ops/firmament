@@ -35,4 +35,5 @@ def seed32(key: int, tick: int, phase: int = 0) -> int:
 
 def np_rng(seed: int, salt: int, tick: int = 0) -> np.random.Generator:
     """Deterministic numpy generator keyed by (seed, salt, tick)."""
-    return np.random.Generator(np.random.Philox(key=np.uint64(mix(seed, salt)), counter=[0, 0, 0, np.uint64(tick)]))
+    return np.random.Generator(
+        np.random.Philox(key=np.uint64(mix(seed, salt)), counter=[0, 0, 0, np.uint64(tick)]))

@@ -4,8 +4,6 @@ they get a plain dict of numpy arrays, so they physically cannot write sim state
 """
 from __future__ import annotations
 
-import numpy as np
-
 from firmament.instruments import diversity, ecology, milestones, novelty, population
 from firmament.io.logging import get
 from firmament.io.metrics import MetricsWriter

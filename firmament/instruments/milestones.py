@@ -97,7 +97,6 @@ class Milestones:
             # persistent signal correlation: [A] vs polymer density across wet cells
             if "signal_correlation" not in self.fired and n >= 50:
                 try:
-                    from firmament.core.chemistry import Chemistry  # index via sched
                     ia = self.sched.chem.index["A"]
                     a_field = v["species"][ia].ravel().astype(np.float64)
                     dens = np.bincount(v["p_cell"][alive], minlength=a_field.size).astype(np.float64)

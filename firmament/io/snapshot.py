@@ -70,6 +70,7 @@ class SnapshotManager:
         # fields not allocated until modules bind (e_in, e_chem, catalyst, membrane_store)
         # are restored by the caller after build_sim; State.load_numpy handles known ones.
         state.load_numpy(arrays)
+        state.p_count = int((arrays["p_state"] > 0).sum())
         state.tick = int(meta["tick"])
         state.next_poly_id = int(meta["next_poly_id"])
         state.solar_mult = float(meta.get("solar_mult", 1.0))

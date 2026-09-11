@@ -159,3 +159,27 @@ to a resumable run by `firmament resume --serve`.
    semantics exactly.
 2. run_id collision: a fork created in the same second as its parent (same config
    hash) landed in the parent's directory — ids now disambiguate.
+
+## Phase 10 — Long-run operations (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase10_ops.py::test_crash_recovery` — injected fault at tick 50 → crash.json (exception, tick, last good snapshot) → resume continues from the snapshot and completes. `resume --auto-restart` loops this automatically (3-crash human stop).
+- `test_dead_era_acceleration_engages_and_reverts` — zero polymers → chemistry at 10× dt (logged mode change, pure function of state → replay-exact); reverts the moment life exists.
+- `test_daily_report_readable` — `firmament report --run <id>` writes a markdown daily report (population, diversity, milestones, novelty, operator actions, lineage count, disk use).
+- `docs/RUNBOOK.md` — start/stop/resume/fork/replay/rotation/disk budget/crash checklist/scaling to world_default.
+
+## Phase 5 world acceptance — 64² replicase world (2026-09-11)
+
+**Life works.** Hand-placed 60-mer replicase seed in the vent pool of `configs/world_test64.yaml`:
+- population peaked at **13,165 polymers**, ended 8,041 at tick 60k of metrics — never zero;
+- **35,218 polymer ids issued**, 20,000+ copy events on record (lineage DB);
+- 6,590 distinct sequences, 6,401 mutant carriers — evolution has raw material;
+- first_copy milestone at tick 200; 66 consecutive audits exact.
+
+**Two real bugs this run caught (both fixed and regression-tested):**
+1. int32 wrap when brine-pool concentration drove one cell's H2O species over 2³¹ —
+   inventory rescaled with kinetics-preserving k300 rescale + audit tripwire (DECISIONS.md).
+2. Under investigation at the time of writing: at tick 67,000 the element audit caught
+   creation of exactly one L molecule (C6H12O2) — a first-membrane-split-era event.
+   The audit did its job (hard stop, run marked); deterministic replay bisection is
+   running to pin the responsible module. M1 will not launch until this is fixed.

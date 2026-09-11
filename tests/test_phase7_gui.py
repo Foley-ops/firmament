@@ -17,7 +17,6 @@ from tests.conftest import build_test_sim, tiny_cfg
 @pytest.fixture
 def dead_world(tmp_path, device):
     from firmament.instruments.sampler import attach_instruments
-    from firmament.io import rundir
 
     cfg = tiny_cfg(n=32, cap=1000)
     run_dir = tmp_path / "runs" / "dead-世界-000000-abcdef"

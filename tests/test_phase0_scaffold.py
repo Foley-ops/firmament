@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from tests.conftest import REPO, tiny_cfg
+from tests.conftest import tiny_cfg
 
 REQUIRED_FIELDS = {"run_id", "tick", "sim_time", "component", "level", "msg"}
 

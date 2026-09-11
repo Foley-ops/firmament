@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tests.conftest import REPO, build_test_sim, tiny_cfg
+from tests.conftest import build_test_sim, tiny_cfg
 
 
 class FakeEvents:
@@ -210,7 +210,7 @@ def test_novelty_detector_fixture_and_null(self=None):
 def test_instruments_change_sim_state_by_zero_bytes(tmp_path, device):
     """Replay-grade proof that observation never touches the world."""
     from firmament.instruments.sampler import attach_instruments
-    from tests.test_phase4_replay import state_bytes, assert_states_identical
+    from tests.test_phase4_replay import assert_states_identical, state_bytes
 
     cfg = tiny_cfg(n=32, cap=2000)
     s1, sched1 = build_test_sim(cfg, device, tmp_path / "a")

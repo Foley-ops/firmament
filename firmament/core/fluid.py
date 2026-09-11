@@ -182,7 +182,8 @@ def k_evap_rain(hw: wp.array2d(dtype=wp.float64), vapor: wp.array2d(dtype=wp.flo
         vapor[i, j] = vapor[i, j] - rain
         dn = d + rain / wp.float64(pc.RHO_W)
         # water lands with sensible CW_SP*T_REF; latent heat releases into the air
-        temp[1, i, j] = ((cs + cw * d) * t1 + rain * wp.float64(pc.CW_SP) * wp.float64(pc.T_REF)) / (cs + cw * dn)
+        sens = rain * wp.float64(pc.CW_SP) * wp.float64(pc.T_REF)
+        temp[1, i, j] = ((cs + cw * d) * t1 + sens) / (cs + cw * dn)
         hw[i, j] = dn
         temp[0, i, j] = t0 + rain * wp.float64(pc.LV) / wp.float64(pc.C_AIR)
 
@@ -410,7 +411,8 @@ class Fluid:
         need = int(math.ceil(dt * 1.3 * max(cmax, 0.05) / cfg.world.cell_meters))
         n_sub = max(1, min(800, need))
         if need > 800:
-            log.warning("CFL substep cap hit — clamping loudly", extra={"needed": need, "capped": 800})
+            log.warning("CFL substep cap hit — clamping loudly",
+                        extra={"needed": need, "capped": 800})
         if n_sub != self.last_nsub:
             log.info("substep count changed", extra={"n_sub": n_sub, "cmax": round(cmax, 3)})
             self.last_nsub = n_sub

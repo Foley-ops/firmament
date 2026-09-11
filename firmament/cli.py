@@ -16,8 +16,8 @@ def build_sim(cfg: Config, run_dir: Path, device: str):
 
     wp.init()
     from firmament.core.chemistry import Chemistry
-    from firmament.core.state import State
     from firmament.core.scheduler import Scheduler
+    from firmament.core.state import State
 
     chem = Chemistry.load(cfg.chemistry.file)
     state = State(cfg, n_species=chem.n_species, device=device)
@@ -116,11 +116,25 @@ def _load_from_snapshot(args, run_dir: Path, snap=None):
 
 def cmd_resume(args):
     run_dir = rundir.RUNS / args.run
-    cfg, state, sched = _load_from_snapshot(args, run_dir)
-    get("cli").info("resumed", extra={"tick": state.tick})
-    if args.serve:
-        _serve(sched, run_dir, args)
-    _guarded_loop(sched, cfg, run_dir, state, args.ticks)
+    attempts = 0
+    while True:
+        cfg, state, sched = _load_from_snapshot(args, run_dir)
+        get("cli").info("resumed", extra={"tick": state.tick, "attempt": attempts})
+        if args.serve:
+            _serve(sched, run_dir, args)
+        try:
+            _guarded_loop(sched, cfg, run_dir, state, args.ticks)
+            return
+        except Exception:
+            attempts += 1
+            if not getattr(args, "auto_restart", False) or attempts >= 3:
+                raise
+            import json as _json
+            crash = _json.loads((run_dir / "crash.json").read_text())
+            get("cli").warning("auto-restart after crash", extra={
+                "crash_tick": crash["tick"],
+                "resuming_from": crash["last_good_snapshot"],
+                "gap_ticks": None})
 
 
 def cmd_fork(args):
@@ -164,6 +178,12 @@ def cmd_event(args):
     print(f"{args.type} applied at tick {state.tick}")
 
 
+def cmd_report(args):
+    from firmament.io.report import write_report
+    path = write_report(rundir.RUNS / args.run)
+    print(path)
+
+
 def cmd_inspect(args):
     run_dir = rundir.RUNS / args.run
     meta = rundir.read_meta(run_dir)
@@ -203,6 +223,7 @@ def main(argv=None):
         s.add_argument("--ticks", type=int, default=None)
         s.add_argument("--serve", action="store_true")
         s.add_argument("--port", type=int, default=8000)
+        s.add_argument("--auto-restart", action="store_true", dest="auto_restart")
         s.set_defaults(fn=fn)
     f = sub.add_parser("fork")
     f.add_argument("--run", required=True)
@@ -218,6 +239,9 @@ def main(argv=None):
     sd.add_argument("--sequence", required=True)
     sd.add_argument("--cell", required=True)
     sd.set_defaults(fn=cmd_seed)
+    rp2 = sub.add_parser("report")
+    rp2.add_argument("--run", required=True)
+    rp2.set_defaults(fn=cmd_report)
     ev = sub.add_parser("event")
     ev.add_argument("--run", required=True)
     ev.add_argument("--type", required=True)

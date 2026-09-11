@@ -16,5 +16,4 @@ def sample(v, cfg) -> dict:
     partners = v["p_partner"][alive]
     row |= {"range_cells": int(len(cells)),
             "bound_pairs": int((partners >= 0).sum()) // 2}
-    idx = v["species"]  # signal species A spatial mean where polymers live
     return row
