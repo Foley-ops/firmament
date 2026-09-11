@@ -21,7 +21,7 @@ log = get("fluid")
 
 SALT_TRANSPORT = 9
 H_MIN = 1e-4          # m; below this a cell is "dry"
-DRAG = 2e-3           # 1/s linear bottom friction (Manning-like, shallow flow)
+MANNING_N = 0.04      # Manning roughness (natural channels); drag = g n^2 |u| / h^(4/3)
 K_EVAP = 3e-6         # kg/m^2/s per kg/m^2 humidity deficit (ocean ~5 mm/day)
 RAIN_FRAC = 0.1       # fraction of supersaturation raining out per tick
 DIFF_FRAC = 0.01      # per-face species exchange per tick in connected water
@@ -81,8 +81,11 @@ def k_momentum(hw: wp.array2d(dtype=wp.float64), elev: wp.array2d(dtype=wp.float
     ip = wp.min(i + 1, H - 1)
     ex = (elev[i, jp] + sed[i, jp] + hw[i, jp] - (elev[i, jm] + sed[i, jm] + hw[i, jm])) / wp.float64(jp - jm)
     ey = (elev[ip, j] + sed[ip, j] + hw[ip, j] - (elev[im, j] + sed[im, j] + hw[im, j])) / wp.float64(ip - im)
-    # neighbors that are dry and higher act as walls: zero the slope toward them
-    drag = wp.float64(1.0) / (wp.float64(1.0) + wp.float64(DRAG) * dts)
+    # quadratic Manning bottom friction (real shallow-flow drag), semi-implicit
+    hh = wp.max(hw[i, j], wp.float64(0.05))
+    sp = wp.sqrt(u[i, j] * u[i, j] + v[i, j] * v[i, j])
+    mann = wp.float64(pc.G) * wp.float64(MANNING_N) * wp.float64(MANNING_N)
+    drag = wp.float64(1.0) / (wp.float64(1.0) + dts * mann * sp / wp.pow(hh, wp.float64(4.0 / 3.0)))
     u_new[i, j] = (u[i, j] - wp.float64(pc.G) * ex * dts) * drag
     v_new[i, j] = (v[i, j] - wp.float64(pc.G) * ey * dts) * drag
 

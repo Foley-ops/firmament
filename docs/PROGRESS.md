@@ -35,3 +35,25 @@ sub-stepping dominates; dead-world chemistry+fields alone would be much faster).
 **Open questions:** none blocking; latitude is Operator-tunable.
 
 **Benchmarks:** radiation+thermal alone, 48²: ~30k ticks/s (the year-long audit test runs in ~1 s).
+
+## Phase 2 — Water (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase2_water.py::test_water_conserved_machine_precision` — liquid+vapor total invariant to < 1e-9 relative over 5 sim-days of full water cycle (f64 pairwise transfers; the 1000-sim-day M0 run in Phase 9 extends this).
+- `tests/test_phase2_water.py::test_slope_release_ends_in_basin` — >90% of a released blob reaches the basin at the slope's foot; no negative depths.
+- `tests/test_phase2_water.py::test_rain_occurs` — evaporation drives a humid airmass over saturation; condensation (vapor drop, water gain, latent heat to air) observed.
+- `tests/test_phase2_water.py::test_substep_count_logged_on_change` — CFL sub-step count changes are logged, per the guide.
+
+**Fixes made by tests:** linear bottom drag was unphysically weak (runoff hit >10 m/s and
+pinned the CFL cap); replaced with quadratic Manning friction (n=0.04, real shallow-flow
+drag). CFL cap raised to 800 and clamps loudly.
+
+**Simplifications vs writeup** (real analog preserved):
+- Vapor lateral transport = conservative relaxation toward patch mean (turbulent
+  boundary-layer mixing at ~1 km scale; advective CFL at 1 m cells would be ~120).
+- Dissolved species ride per-tick accumulated face water fluxes with stochastic integer
+  rounding (keyed per face — bitwise deterministic, exactly conservative).
+- Erosion: sediment flux ∝ |u|³ through faces (stream-power law analog).
+
+**Benchmarks:** 32² water world ~ 150–600 substeps/tick after Manning friction settles
+flows; full pipeline at 256² ≈ 51 tps.
