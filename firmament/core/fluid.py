@@ -394,7 +394,10 @@ class Fluid:
         wp.launch(k_row_max_speed, dim=h, inputs=[s.water_depth, s.water_u, s.water_v, b["row"], w],
                   device=s.device)
         cmax = float(np.max(b["row"].numpy()))
-        n_sub = max(1, min(400, int(math.ceil(dt * 1.3 * max(cmax, 0.05) / cfg.world.cell_meters))))
+        need = int(math.ceil(dt * 1.3 * max(cmax, 0.05) / cfg.world.cell_meters))
+        n_sub = max(1, min(800, need))
+        if need > 800:
+            log.warning("CFL substep cap hit — clamping loudly", extra={"needed": need, "capped": 800})
         if n_sub != self.last_nsub:
             log.info("substep count changed", extra={"n_sub": n_sub, "cmax": round(cmax, 3)})
             self.last_nsub = n_sub

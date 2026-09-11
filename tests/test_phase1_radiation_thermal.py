@@ -96,3 +96,32 @@ def test_energy_balance_one_year_dry(tmp_path, device):
     # (sampled via monthly means is overkill; assert temps stayed physical instead)
     t = state.temp.numpy()
     assert 200.0 < t[1].mean() < 350.0
+
+
+def test_energy_audit_detects_unledgered_heat(tmp_path, device):
+    """Adversarial check that the audit has teeth: inject heat into the temperature
+    field WITHOUT a ledger entry and assert the in/out-vs-Delta-stored comparison
+    catches it. Proves Delta-stored is independent of the accumulators."""
+    import warp as wp
+
+    from firmament.core.audit import Audit
+    from firmament.core.chemistry import Chemistry
+
+    cfg, state, sched = _dry_sim(tmp_path, device, n=48, dt=600.0)
+    chem = Chemistry.load(str(REPO / "configs/chemistry_v0.yaml"))
+    aud = Audit(cfg, chem, tmp_path)
+    ticks = int(30 * 86400 / cfg.run.dt_seconds)          # one sim-month
+    stored0 = aud.energy_stored(state)
+    for _ in range(ticks // 2):
+        sched.tick_once()
+    # tamper: +20 K across the sediment layer, no e_in entry (a "bookkeeping bug")
+    t = state.temp.numpy()
+    t[2] += 20.0
+    state.temp = wp.array(t, dtype=wp.float64, device=state.device)
+    for _ in range(ticks - ticks // 2):
+        sched.tick_once()
+    e_in = float(state.e_in.numpy().sum())
+    e_out = float(state.e_out.numpy().sum())
+    stored1 = aud.energy_stored(state)
+    rel = abs(e_in - e_out - (stored1 - stored0)) / max(e_in, e_out)
+    assert rel > 1e-3, f"audit failed to detect injected unledgered heat (rel={rel:.2e})"
