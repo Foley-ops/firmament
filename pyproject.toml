@@ -33,3 +33,4 @@ ignore = ["E731", "E741"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: long-running acceptance tests"]
