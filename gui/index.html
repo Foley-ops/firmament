@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FIRMAMENT</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="touched-banner" class="hidden">⚠ TOUCHED — this run has been edited by the Operator (developer mode)</div>
+
+<!-- ============ RUN PICKER (landing) ============ -->
+<div id="picker" class="screen">
+  <h1>FIRMAMENT</h1>
+  <p class="sub">Select a world to observe. Closing the viewer leaves no residue.</p>
+  <table id="run-table">
+    <thead><tr><th>run</th><th>status</th><th>sim time</th><th>ticks/s</th><th>last milestone</th><th>touched</th><th>snapshots</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- ============ MAIN VIEW ============ -->
+<div id="main" class="screen hidden">
+  <header>
+    <button id="back">← runs</button>
+    <span id="run-name"></span>
+    <span id="clocks"></span>
+    <span id="tps"></span>
+  </header>
+  <div id="cols">
+    <div id="left">
+      <div class="panel" id="map-panel">
+        <div class="panel-title">Map <select id="layer-select"></select>
+          <span id="hover-readout"></span></div>
+        <canvas id="map" width="512" height="512"></canvas>
+      </div>
+      <div class="panel" id="time-panel">
+        <div class="panel-title">Time</div>
+        <button data-mode="paused">⏸ pause</button>
+        <button data-mode="step">⏭ step</button>
+        <button data-mode="throttled">▶ play</button>
+        <button data-mode="unbounded">⏩ unbounded</button>
+        <label>target tps <input id="tps-slider" type="range" min="1" max="200" value="30"></label>
+        <span id="mode-label"></span>
+      </div>
+      <div class="panel" id="chart-panel">
+        <div class="panel-title">Charts
+          <select id="metric-select" multiple size="1"></select>
+          <label><input type="checkbox" id="log-scale"> log</label>
+          <button id="chart-refresh">refresh</button>
+        </div>
+        <canvas id="chart" width="512" height="200"></canvas>
+      </div>
+    </div>
+    <div id="right">
+      <div class="panel" id="inspector-panel">
+        <div class="panel-title">Inspector</div>
+        <div id="inspector">click a map cell…</div>
+      </div>
+      <div class="panel" id="lineage-panel">
+        <div class="panel-title">Lineage tree <button id="lineage-refresh">refresh</button></div>
+        <div id="lineage"></div>
+      </div>
+      <div class="panel" id="events-panel">
+        <div class="panel-title">Event timeline <button id="events-refresh">refresh</button></div>
+        <div id="events"></div>
+      </div>
+      <div class="panel" id="console-panel">
+        <div class="panel-title">God console <span class="hint">(natural events only)</span></div>
+        <select id="event-type">
+          <option>rain</option><option>drought</option><option>flood</option>
+          <option>earthquake</option><option>volcano</option><option>meteor</option>
+          <option>climate</option><option>solar</option>
+        </select>
+        <div id="event-params"></div>
+        <button id="event-submit">request</button>
+        <div id="confirm-box" class="hidden">
+          <p id="confirm-text"></p>
+          <button id="confirm-yes">CONFIRM</button><button id="confirm-no">cancel</button>
+        </div>
+        <hr>
+        <label id="dev-toggle-label"><input type="checkbox" id="dev-toggle"> developer mode
+          <span class="danger">— edits permanently mark the run TOUCHED</span></label>
+        <div id="dev-forms" class="hidden">
+          <input id="dev-json" placeholder='{"action":"set_species","species":"PP","x":1,"y":1,"count":1000}' size="40">
+          <button id="dev-submit">apply edit</button>
+        </div>
+      </div>
+      <div class="panel" id="runmgr-panel">
+        <div class="panel-title">Run manager</div>
+        <div id="runmgr"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -126,3 +126,19 @@ tick (host-side only) and delivers them at sample time.
 **Simplifications:** mutant-100-generations uses lineage depth of a mutated polymer;
 "living lineages" proxied by distinct sequence hashes; energy split (copy vs decay)
 estimated from lineage events × copy cost.
+
+## Phase 7 — GUI (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase7_gui.py::TestPanelsOnDeadWorld` — 12 tests: run picker (status/touched), meta, all map layers finite on a dead world, inspector cell + 404 polymer, charts metrics, empty lineage tree, event timeline, console confirm-token flow, developer-mode 403 gate, time control, websocket attach→stream→detach with `viewers==0` and `view_cache is None` after (zero residue), gui/ static files served.
+- `test_throughput_with_viewer_within_5pct` — measured tps with a live websocket viewer vs detached: < 5% slowdown (view cache built at most 2 Hz, only while viewers > 0).
+
+**Design:** single-page vanilla-JS app (no dependencies, LAN-friendly): run picker landing,
+canvas map with layer select/zoom/pan/hover/click-inspect, time panel, inspector with
+motif highlighting + lineage path, multi-series charts (log/linear), collapsible lineage
+tree, event timeline with map jump, god console with confirm dialog, red developer
+toggle + TOUCHED banner, run manager with fork and metrics compare.
+
+**v0 limitation (open question for Operator):** the API serves the sim in its own
+process; the run picker lists all runs but attaches only to the running one — attach
+to a resumable run by `firmament resume --serve`.

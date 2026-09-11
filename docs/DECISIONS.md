@@ -25,3 +25,12 @@ precision over 10⁶+ ticks. Species integers give exact element conservation.
 
 ## 2026-09-10 — Python 3.12
 Taichi (needed for the benchmark) has no 3.13 wheels; Warp supports 3.12 fully.
+
+## 2026-09-11 — Solute concentration and the int32 limit
+The Phase 5 acceptance run wrapped a cell's H2O species count: water draining into
+the vent basin concentrates dissolved species (real: brine pools), and int32 wrapped
+at 2^31 — the element audit caught a deficit of exactly 2^32 H2O. Fixes: H2O species
+inventory scaled down 10x with k300 rescaled by 10^(H2O stoichiometric order) so
+effective kinetics are unchanged; audit tripwire hard-errors if any count exceeds
+1.6e9 (precipitation/solubility is a v1 candidate, added — never patched — per
+Principle 5).
