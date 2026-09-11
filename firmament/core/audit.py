@@ -47,16 +47,16 @@ class Audit:
     # ---- totals ----
     def element_totals(self, s) -> np.ndarray:
         spec = s.species.numpy().astype(np.int64)
-        if hasattr(s, "precipitate"):
-            spec = spec + s.precipitate.numpy().astype(np.int64)
-        # tripwire: dissolved concentration approaching int32 wrap = unmodeled
-        # solubility. Pause loudly rather than ever wrapping silently.
+        # tripwire on the DISSOLVED phase only (the precipitate store is int64 and
+        # may grow without bound — that is the evaporite bed, not an overflow risk)
         peak = int(spec.max())
         if peak > 1_600_000_000:
             k = int(np.unravel_index(spec.argmax(), spec.shape)[0])
             raise AuditError(
                 f"species '{self.chem.names[k]}' count {peak} nears the int32 limit — "
                 "dissolved concentration exceeded modeled solubility (model gap)")
+        if hasattr(s, "precipitate"):
+            spec = spec + s.precipitate.numpy()
         tot = (spec.sum(axis=(1, 2))[:, None] * self.chem.comp.astype(np.int64)).sum(axis=0)
         alive = s.p_state.numpy() > 0
         n_units = int(s.p_len.numpy()[alive].sum())

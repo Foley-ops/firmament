@@ -357,24 +357,25 @@ def k_species_diffuse(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dty
 
 
 @wp.kernel
-def k_precipitate(spec: wp.array3d(dtype=wp.int32), precip: wp.array3d(dtype=wp.int32),
+def k_precipitate(spec: wp.array3d(dtype=wp.int32), precip: wp.array3d(dtype=wp.int64),
                   hw: wp.array2d(dtype=wp.float64)):
-    """Solubility: dissolved counts above SAT_CAP precipitate to an immobile store;
+    """Solubility: dissolved counts above SAT_CAP precipitate to an immobile store
+    (int64 — the evaporite bed grows without bound over geological time);
     redissolution when under-saturated and wet. Deterministic integer moves."""
     s, i, j = wp.tid()
     n = spec[s, i, j]
     if n > SAT_CAP:
         ex = n - SAT_CAP
         spec[s, i, j] = SAT_CAP
-        precip[s, i, j] = precip[s, i, j] + ex
-    elif precip[s, i, j] > 0 and hw[i, j] > wp.float64(H_MIN):
+        precip[s, i, j] = precip[s, i, j] + wp.int64(ex)
+    elif precip[s, i, j] > wp.int64(0) and hw[i, j] > wp.float64(H_MIN):
         room = SAT_CAP - n
-        back = int(wp.float64(room) * wp.float64(REDISSOLVE))
+        back = wp.int64(wp.float64(room) * wp.float64(REDISSOLVE))
         if back > precip[s, i, j]:
             back = precip[s, i, j]
-        if back > 0:
+        if back > wp.int64(0):
             precip[s, i, j] = precip[s, i, j] - back
-            spec[s, i, j] = n + back
+            spec[s, i, j] = n + wp.int32(back)
 
 
 @wp.kernel
