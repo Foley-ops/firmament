@@ -47,3 +47,11 @@ If the seed dies: **new run, different environment** (pool temperature via vent 
 monomer supply via initial concentrations, energy via solar constant), never an edited
 seed or physics in a living run. Each attempt logged in `docs/M1_ATTEMPTS.md`; after
 10 failures, stop and report.
+
+---
+
+## APPROVED
+
+**Operator approval given 2026-09-11 16:12 CDT** (Nick, in session): seed as proposed,
+placement as proposed, M1 to start automatically upon M0 certification. The M1
+protocol (environment-only tuning, 10-attempt limit, docs/M1_ATTEMPTS.md) applies.
