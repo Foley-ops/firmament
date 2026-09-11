@@ -14,6 +14,12 @@ def new_run_id(cfg) -> str:
 
 def create(cfg, run_id: str | None = None, parent: str | None = None) -> Path:
     run_id = run_id or new_run_id(cfg)
+    # same-second fork of the same config must not collide with its parent
+    if run_id and (RUNS / run_id / "meta.json").exists():
+        k = 2
+        while (RUNS / f"{run_id}.{k}" / "meta.json").exists():
+            k += 1
+        run_id = f"{run_id}.{k}"
     d = RUNS / run_id
     for sub in ("logs", "snapshots", "metrics", "reports"):
         (d / sub).mkdir(parents=True, exist_ok=True)

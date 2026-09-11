@@ -23,13 +23,13 @@ def request(sched, event: str, params: dict) -> dict:
         raise ValueError(f"not a natural event: {event}")
     tick = sched.state.tick + 1
     rec = sched.events.append(event, tick, component="operator", params=params)
-    sched.pending_events.append(lambda s, t: _apply(sched, event, params, rec["n"]))
+    sched.pending_events.append(lambda s, t: _apply(sched, event, params, rec["n"], tick))
     return rec
 
 
 def apply_event(sched, rec: dict, replaying: bool = False) -> None:
     sched.pending_events.append(
-        lambda s, t: _apply(sched, rec["event"], rec["params"], rec["n"]))
+        lambda s, t: _apply(sched, rec["event"], rec["params"], rec["n"], rec["tick"]))
 
 
 def _region_mask(shape, params) -> np.ndarray:
@@ -40,11 +40,12 @@ def _region_mask(shape, params) -> np.ndarray:
     return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
 
 
-def _apply(sched, event: str, params: dict, event_n: int) -> None:
+def _apply(sched, event: str, params: dict, event_n: int, at_tick: int) -> None:
     s = sched.state
     aud = getattr(sched, "audit", None)
     h, w = s.shape
-    rng = np_rng(sched.cfg.run.seed, SALT_EVENT, s.tick * 1000 + event_n)
+    # rng keyed by the LOGGED tick, not the application instant -> replay-exact
+    rng = np_rng(sched.cfg.run.seed, SALT_EVENT, at_tick * 1000 + event_n)
     mask = _region_mask(s.shape, params)
     log.info(f"applying {event}", extra={"params": params, "tick": s.tick})
 

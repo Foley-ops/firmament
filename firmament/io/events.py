@@ -58,7 +58,9 @@ def replay_events(sched, events_path: Path) -> None:
         orig = sched.tick_once
 
         def tick_with_replay():
-            while sched.replay_queue and sched.replay_queue[0]["tick"] == sched.state.tick:
+            # live semantics: an event logged for tick T is applied at the top of the
+            # tick_once that advances T-1 -> T
+            while sched.replay_queue and sched.replay_queue[0]["tick"] == sched.state.tick + 1:
                 rec = sched.replay_queue.pop(0)
                 console.apply_event(sched, rec, replaying=True)
             orig()

@@ -142,3 +142,20 @@ toggle + TOUCHED banner, run manager with fork and metrics compare.
 **v0 limitation (open question for Operator):** the API serves the sim in its own
 process; the run picker lists all runs but attaches only to the running one — attach
 to a resumable run by `firmament resume --serve`.
+
+## Phase 8 — God console & developer mode (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase8_console.py::test_every_event_replays_to_identical_state` — rain, drought, flood, earthquake, volcano, meteor, solar, climate applied live at 8 different ticks; a fresh world replaying ONLY the event log reaches byte-identical state at tick 400.
+- `test_solar_multiplier_survives_snapshot` — persistent event state round-trips.
+- `TestAddSpecies` — changed rate refused; reordered species refused; pure superset validates (v0 applies additions via fork — documented limitation).
+- `TestDeveloperMode::test_edit_marks_touched_and_propagates_to_fork` — first EDIT writes the event, marks meta immediately, and the fork inherits TOUCHED.
+- `TestDeveloperMode::test_edit_polymer_rescans_motifs` — state stays coherent after raw edits.
+- `test_cli_event_command` — events work from the CLI too (offline path), not just the GUI.
+
+**Bugs the tests caught (fixed in code):**
+1. Replay applied events one tick later than live and keyed event RNG off the
+   application instant — now RNG keys off the LOGGED tick and replay matches live
+   semantics exactly.
+2. run_id collision: a fork created in the same second as its parent (same config
+   hash) landed in the parent's directory — ids now disambiguate.

@@ -150,6 +150,20 @@ def cmd_seed(args):
     print(f"seed placed at {x},{y}; event #0 logged")
 
 
+def cmd_event(args):
+    """Apply a natural event to a resumable run (offline path; GUI is the live path)."""
+    import json
+
+    from firmament.operator import console
+    run_dir = rundir.RUNS / args.run
+    cfg, state, sched = _load_from_snapshot(args, run_dir)
+    console.request(sched, args.type, json.loads(args.params))
+    sched.tick_once()                     # events apply on the next tick boundary
+    sched.snapshots.save(state, sched)
+    _flush(sched)
+    print(f"{args.type} applied at tick {state.tick}")
+
+
 def cmd_inspect(args):
     run_dir = rundir.RUNS / args.run
     meta = rundir.read_meta(run_dir)
@@ -204,6 +218,11 @@ def main(argv=None):
     sd.add_argument("--sequence", required=True)
     sd.add_argument("--cell", required=True)
     sd.set_defaults(fn=cmd_seed)
+    ev = sub.add_parser("event")
+    ev.add_argument("--run", required=True)
+    ev.add_argument("--type", required=True)
+    ev.add_argument("--params", default="{}")
+    ev.set_defaults(fn=cmd_event)
     i = sub.add_parser("inspect")
     i.add_argument("--run", required=True)
     i.set_defaults(fn=cmd_inspect)
