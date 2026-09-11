@@ -1,1 +1,23 @@
+# run artifacts (snapshots, logs, metrics, lineage DBs — gigabytes, per-machine)
 runs/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# warp kernel cache & GPU benchmark scratch
+.warp_cache/
+*.egg-info/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# local crash/scratch
+crash.json
+nohup.out
