@@ -13,7 +13,8 @@ wp.init()
 
 
 def tiny_cfg(n: int = 32, water: float = 0.4, seed: int = 20260910, cap: int = 20000,
-             dt: float = 60.0, vents=None, solar: float = 1361.0, log_level: str = "WARNING"):
+             dt: float = 60.0, vents=None, solar: float = 1361.0, geo: float = 0.1,
+             log_level: str = "WARNING"):
     from firmament.config import Config
     return Config.model_validate({
         "run": {"name": "test", "seed": seed, "dt_seconds": dt,
@@ -23,7 +24,7 @@ def tiny_cfg(n: int = 32, water: float = 0.4, seed: int = 20260910, cap: int = 2
                   "vents": vents if vents is not None else [[n // 4, n // 2]],
                   "rotation_period_hours": 24, "year_length_days": 365,
                   "axial_tilt_deg": 23.5, "solar_constant_wm2": solar,
-                  "geothermal_flux_wm2": 0.1, "initial_water_fraction": water},
+                  "geothermal_flux_wm2": geo, "initial_water_fraction": water},
         "chemistry": {"file": str(REPO / "configs/chemistry_v0.yaml"), "integer_counts": True},
         "polymers": {"capacity": cap, "max_length": 256,
                      "alphabet": ["M1", "M2", "M3", "M4"],

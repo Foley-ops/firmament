@@ -57,3 +57,19 @@ drag). CFL cap raised to 800 and clamps loudly.
 
 **Benchmarks:** 32² water world ~ 150–600 substeps/tick after Manning friction settles
 flows; full pipeline at 256² ≈ 51 tps.
+
+## Phase 3 — Chemistry (2026-09-11)
+
+**Acceptance criteria met** (test names that prove it):
+- `tests/test_phase3_chemistry.py::TestLoader::test_valid_network_loads`
+- `tests/test_phase3_chemistry.py::TestLoader::test_rejects_unbalanced_reaction`
+- `tests/test_phase3_chemistry.py::TestLoader::test_rejects_species_without_sink`
+- `tests/test_phase3_chemistry.py::test_closed_box_atoms_exact_and_equilibrating` — dark sealed box: element totals EXACT to the integer over 3000 ticks; reaction activity declines monotonically toward equilibrium (full detailed balance takes ~23 sim-days — the slowest reaction's timescale; direction + exactness tested at unit horizon).
+- `tests/test_phase3_chemistry.py::test_lit_box_pp_day_night_and_depth` — dark-control experiment: lit world's daytime P~P gain > 3x the geothermal-only control; the gain vanishes at night; P~P anti-correlates with water depth (Beer-Lambert).
+
+**Simplifications vs writeup** (real analog preserved):
+- Rates parameterized as k300 (rate at 300 K) + Ea, i.e. k(T) = k300·exp(−Ea/R·(1/T−1/300)) — standard Arrhenius re-parameterization, easier to tune honestly.
+- Vents have no special reaction flag: they are simply HOT, and Arrhenius does the rest.
+- Dissolved reactive H2O is a conserved integer species; bulk water_depth is the inert solvent (water activity vs bulk phase). No vent outgassing in v0 — element totals strictly closed.
+
+**Benchmarks:** chemistry kernel (30 reactions, serial per cell) adds ~1 ms/tick at 32².
