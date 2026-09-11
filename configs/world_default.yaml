@@ -1,0 +1,36 @@
+run:
+  name: "first-light"
+  seed: 20260910
+  dt_seconds: 60
+  snapshot_every_sim_days: 30
+  metrics_every_ticks: 100
+  audit_every_ticks: 1000
+
+world:
+  size: [1024, 1024]
+  cell_meters: 1.0
+  terrain_seed: 7
+  vents: [[300, 512], [700, 200]]
+  rotation_period_hours: 24
+  year_length_days: 365
+  axial_tilt_deg: 23.5
+  solar_constant_wm2: 1361
+  geothermal_flux_wm2: 0.1
+  initial_water_fraction: 0.4
+
+chemistry:
+  file: configs/chemistry_v0.yaml
+  integer_counts: true
+
+polymers:
+  capacity: 10_000_000
+  max_length: 256
+  alphabet: [M1, M2, M3, M4]
+  mutation_rate_per_monomer: 0.005
+  hydrolysis_base_rate: 1e-7
+  copy_energy_per_monomer: 1
+  genetic_code: configs/genetic_code_v0.yaml
+
+logging:
+  level: INFO
+  dir: null   # defaults to runs/<run_id>/logs

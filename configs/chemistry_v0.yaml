@@ -1,0 +1,79 @@
+# FIRMAMENT chemistry v0 — closed network: every species has a source and a sink.
+# Rule: if a chemist would say "that can't happen", it's not here; simplified is fine.
+#
+# Units: counts are abstract molecule units (1 count ~ 1 umol). Rates use
+# k(T) = k300 * exp(-Ea/R * (1/T - 1/300)) — k300 is the per-tick rate constant at
+# 300 K (measurable), Ea (J/mol) sets temperature sensitivity (Arrhenius).
+# Propensity = k(T) * prod(n_reactant) / NORM^(order-1), NORM = 1e5.
+# photo reactions additionally scale with light_water/300 (clamped to [0,3]).
+# dh is kJ/mol (<0 exothermic); heat deposited = -dh * 1e-3 J per event.
+#
+# H2O note (docs/DECISIONS.md): the H2O *species* is dissolved reactive water and is
+# exactly conserved like every species; the bulk water_depth field is the solvent
+# (transport + thermal only). Real analog: water activity vs bulk phase.
+
+norm: 1.0e5
+
+elements: [H, C, N, O, P, S, Fe]
+
+species:
+  H2O:  {formula: {H: 2, O: 1},                init_wet: 10000000, init_dry: 100000}
+  CO2:  {formula: {C: 1, O: 2},                init_wet: 500000,   init_dry: 500000}
+  CH4:  {formula: {C: 1, H: 4},                init_wet: 50000,    init_dry: 50000}
+  NH3:  {formula: {N: 1, H: 3},                init_wet: 20000,    init_dry: 20000}
+  H2:   {formula: {H: 2},                      init_wet: 100000,   init_dry: 100000}
+  O2:   {formula: {O: 2},                      init_wet: 0,        init_dry: 0}
+  N2:   {formula: {N: 2},                      init_wet: 800000,   init_dry: 800000}
+  H2S:  {formula: {H: 2, S: 1},                init_wet: 10000,    init_dry: 1000}
+  S:    {formula: {S: 1},                      init_wet: 1000,     init_dry: 1000}
+  HCN:  {formula: {H: 1, C: 1, N: 1},          init_wet: 20000,    init_dry: 2000}
+  CH2O: {formula: {C: 1, H: 2, O: 1},          init_wet: 30000,    init_dry: 3000}
+  TRI:  {formula: {C: 3, H: 6, O: 3},          init_wet: 1000,     init_dry: 0}   # simple sugar (triose)
+  Pi:   {formula: {P: 1, O: 4, H: 3},          init_wet: 50000,    init_dry: 5000}  # H3PO4
+  PP:   {formula: {P: 2, O: 7, H: 4},          init_wet: 0,        init_dry: 0}     # H4P2O7, the energy carrier
+  M1:   {formula: {C: 4, H: 5, N: 2, O: 4, P: 1}, init_wet: 0,     init_dry: 0}
+  M2:   {formula: {C: 4, H: 5, N: 2, O: 4, P: 1}, init_wet: 0,     init_dry: 0}
+  M3:   {formula: {C: 4, H: 5, N: 2, O: 4, P: 1}, init_wet: 0,     init_dry: 0}
+  M4:   {formula: {C: 4, H: 5, N: 2, O: 4, P: 1}, init_wet: 0,     init_dry: 0}
+  A:    {formula: {C: 2, H: 5, N: 1, O: 2},    init_wet: 0,        init_dry: 0}     # amino-like (glycine)
+  L:    {formula: {C: 6, H: 12, O: 2},         init_wet: 0,        init_dry: 0}     # lipid-like
+  FeO:  {formula: {Fe: 1, O: 1},               init_wet: 20000,    init_dry: 2000}  # dissolved Fe2+
+  Fe2O3: {formula: {Fe: 2, O: 3},              init_wet: 10000,    init_dry: 1000}  # Fe3+
+
+reactions:
+  # --- energy economy: the ONLY free lunch is light and vent heat ---
+  - {name: photophosphorylation, sub: {Pi: 2}, prod: {PP: 1, H2O: 1}, dh: 33, ea: 0,     k300: 2.0e-3, photo: true}   # photochemical P~P formation
+  - {name: vent_phosphorylation,  sub: {Pi: 2}, prod: {PP: 1, H2O: 1}, dh: 33, ea: 60000, k300: 5.0e-4}               # thermal condensation at hot vents
+  - {name: pp_hydrolysis, sub: {PP: 1, H2O: 1}, prod: {Pi: 2}, dh: -33, ea: 30000, k300: 5.0e-4}
+  # --- C/H/O core ---
+  - {name: h2o_photolysis, sub: {H2O: 2}, prod: {H2: 2, O2: 1}, dh: 484, ea: 0, k300: 1.0e-8, photo: true}
+  - {name: methane_oxidation, sub: {CH4: 1, O2: 2}, prod: {CO2: 1, H2O: 2}, dh: -890, ea: 60000, k300: 1.0e-6}
+  - {name: formaldehyde_synthesis, sub: {CO2: 1, H2: 2}, prod: {CH2O: 1, H2O: 1}, dh: 1, ea: 50000, k300: 1.0e-5}
+  - {name: methanogenesis, sub: {CO2: 1, H2: 4}, prod: {CH4: 1, H2O: 2}, dh: -165, ea: 55000, k300: 5.0e-6}
+  - {name: formose, sub: {CH2O: 3}, prod: {TRI: 1}, dh: -80, ea: 45000, k300: 3.0e-5, catalyzable: true}
+  - {name: sugar_oxidation, sub: {TRI: 1, O2: 3}, prod: {CO2: 3, H2O: 3}, dh: -1400, ea: 55000, k300: 1.0e-6}
+  - {name: sugar_retro, sub: {TRI: 1}, prod: {CH2O: 3}, dh: 80, ea: 70000, k300: 1.0e-5}
+  # --- nitrogen ---
+  - {name: n2_fixation, sub: {N2: 1, H2: 3}, prod: {NH3: 2}, dh: -92, ea: 70000, k300: 2.0e-6}
+  - {name: nh3_photolysis, sub: {NH3: 2}, prod: {N2: 1, H2: 3}, dh: 92, ea: 0, k300: 5.0e-4, photo: true}
+  - {name: hcn_synthesis, sub: {NH3: 1, CH4: 1}, prod: {HCN: 1, H2: 3}, dh: 256, ea: 0, k300: 2.0e-4, photo: true}  # Miller-Urey (UV-driven)
+  # --- monomers and building blocks ---
+  - {name: strecker_amino, sub: {CH2O: 1, HCN: 1, H2O: 1}, prod: {A: 1}, dh: -50, ea: 40000, k300: 5.0e-5}
+  - {name: amino_decay, sub: {A: 2}, prod: {CO2: 2, CH4: 2, N2: 1, H2: 1}, dh: -100, ea: 60000, k300: 1.0e-6}
+  - {name: m1_synthesis, sub: {HCN: 2, CH2O: 2, Pi: 1}, prod: {M1: 1, H2O: 2}, dh: -20, ea: 50000, k300: 2.0e-5, catalyzable: true}
+  - {name: m2_synthesis, sub: {HCN: 2, CH2O: 2, Pi: 1}, prod: {M2: 1, H2O: 2}, dh: -20, ea: 50000, k300: 2.0e-5, catalyzable: true}
+  - {name: m3_synthesis, sub: {HCN: 2, CH2O: 2, Pi: 1}, prod: {M3: 1, H2O: 2}, dh: -20, ea: 50000, k300: 2.0e-5, catalyzable: true}
+  - {name: m4_synthesis, sub: {HCN: 2, CH2O: 2, Pi: 1}, prod: {M4: 1, H2O: 2}, dh: -20, ea: 50000, k300: 2.0e-5, catalyzable: true}
+  - {name: m1_hydrolysis, sub: {M1: 1, H2O: 2}, prod: {HCN: 2, CH2O: 2, Pi: 1}, dh: 20, ea: 55000, k300: 3.0e-7}
+  - {name: m2_hydrolysis, sub: {M2: 1, H2O: 2}, prod: {HCN: 2, CH2O: 2, Pi: 1}, dh: 20, ea: 55000, k300: 3.0e-7}
+  - {name: m3_hydrolysis, sub: {M3: 1, H2O: 2}, prod: {HCN: 2, CH2O: 2, Pi: 1}, dh: 20, ea: 55000, k300: 3.0e-7}
+  - {name: m4_hydrolysis, sub: {M4: 1, H2O: 2}, prod: {HCN: 2, CH2O: 2, Pi: 1}, dh: 20, ea: 55000, k300: 3.0e-7}
+  - {name: lipid_synthesis, sub: {CH2O: 6, H2: 4}, prod: {L: 1, H2O: 4}, dh: -200, ea: 55000, k300: 1.0e-6, catalyzable: true}
+  - {name: lipid_oxidation, sub: {L: 1, O2: 8}, prod: {CO2: 6, H2O: 6}, dh: -2500, ea: 60000, k300: 5.0e-7}
+  # --- sulfur and iron (redox flavor, catalysis substrate) ---
+  - {name: h2s_oxidation, sub: {H2S: 2, O2: 1}, prod: {S: 2, H2O: 2}, dh: -440, ea: 40000, k300: 1.0e-5}
+  - {name: s_reduction, sub: {S: 1, H2: 1}, prod: {H2S: 1}, dh: -40, ea: 50000, k300: 1.0e-5}
+  - {name: fe_oxidation, sub: {FeO: 4, O2: 1}, prod: {Fe2O3: 2}, dh: -560, ea: 35000, k300: 2.0e-5}
+  - {name: fe_reduction, sub: {Fe2O3: 1, H2: 1}, prod: {FeO: 2, H2O: 1}, dh: 30, ea: 55000, k300: 5.0e-6}
+  # --- HCN sink beyond monomers (slow hydrolysis to formamide-like -> recycled) ---
+  - {name: hcn_hydrolysis, sub: {HCN: 1, H2O: 1, H2: 1}, prod: {CH2O: 1, NH3: 1}, dh: -30, ea: 50000, k300: 2.0e-6}

@@ -1,0 +1,23 @@
+# FIRMAMENT genetic code v0 — FROZEN once a run is alive. New motifs may only be
+# ADDED, and only if their absence changed nothing for existing life.
+#
+# All motifs are palindromes under the complement map (restriction-site style), so
+# function survives complementary copying. Effects cost P~P per tick of activity
+# (paid as PP + H2O -> 2 Pi, heat released — no free lunch).
+# strength: catalyst = rate multiplier added; membrane = L accreted per tick;
+# emit = forced reaction events per tick.
+
+k: 6
+complement: {M1: M2, M2: M1, M3: M4, M4: M3}
+
+motifs:
+  replicase:        {seq: [M1, M3, M1, M2, M4, M2], effect: replicase, cost_pp: 0}   # RNA polymerase ribozyme
+  catalyst_formose: {seq: [M1, M1, M1, M2, M2, M2], effect: catalyst, target: formose, strength: 4.0, cost_pp: 1}  # enzyme
+  catalyst_m1:      {seq: [M3, M3, M3, M4, M4, M4], effect: catalyst, target: m1_synthesis, strength: 4.0, cost_pp: 1}
+  catalyst_lipid:   {seq: [M1, M2, M1, M2, M1, M2], effect: catalyst, target: lipid_synthesis, strength: 4.0, cost_pp: 1}
+  binder:           {seq: [M3, M1, M3, M4, M2, M4], effect: binder, cost_pp: 1}      # protein-protein binding
+  membrane:         {seq: [M1, M1, M3, M4, M2, M2], effect: membrane, strength: 4, cost_pp: 2}  # lipid bilayer
+  photoactive:      {seq: [M3, M3, M1, M2, M4, M4], effect: photoactive, cost_pp: 0} # photosystem (gates other motifs by light)
+  motor:            {seq: [M1, M3, M3, M4, M4, M2], effect: motor, cost_pp: 2}       # flagellum / chemotaxis (moves up P~P gradient)
+  emit_A:           {seq: [M3, M1, M1, M2, M2, M4], effect: emit, target: strecker_amino, strength: 2, cost_pp: 1}  # quorum signal synthesis
+  sense_A:          {seq: [M4, M1, M1, M2, M2, M3], effect: sense, target: A, cost_pp: 0}  # signal receptor (gates other motifs by [A])

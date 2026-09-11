@@ -1,0 +1,35 @@
+[project]
+name = "firmament"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "numpy>=2.5.3",
+    "pyarrow>=25.0.1",
+    "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
+    "uvicorn>=0.52.4",
+    "warp-lang>=1.17.0",
+    "websockets>=17.1",
+    "zarr>=3.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E731", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
