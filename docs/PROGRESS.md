@@ -215,3 +215,20 @@ Fixed: every sim now always exposes its read-only bridge on a free port recorded
 meta.json (pid liveness-probed); the run picker lists all runs machine-wide and
 cross-attaches by redirecting to the target sim's own bridge. Viewer-independent
 cost is an idle socket; view work still happens only while viewers > 0.
+
+## M0 CERTIFIED (2026-09-11, 20:03 CDT)
+
+`20260911-070117-shakeout-72d741`: 1000 sim-days (1,440,000 ticks) complete on
+world_small. **1,508 consecutive clean conservation audits**; final drift: water
+9.0e-16 relative, energy 5.5e-12; elements exact to the integer throughout.
+Day/night + seasonal cycles, full water cycle, chemistry equilibria, brine pools
+with evaporite deposition — all validated with zero polymers. Baseline metrics on
+disk. Mean throughput after CUDA-graph + GPU-isolation fixes: ~47.5 ticks/s.
+
+**Finding:** the certified world is monomer-poor (max 2–3 M per cell planet-wide
+after 1000 days) — abiotic nucleotide synthesis is the bottleneck, as in real
+origin-of-life chemistry. Consequence: the approved "fork + chemistry.overrides"
+seeding plan is mechanically impossible (overrides apply only at world creation).
+Per the guide's M1 protocol (monomer supply = initial concentrations ⇒ new run),
+**M1 attempt #1 is a fresh world** — identical physics/terrain, enriched initial
+monomer/energy pool — with M0 preserved untouched as the certified dead baseline.
