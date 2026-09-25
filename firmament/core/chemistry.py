@@ -187,13 +187,9 @@ class Chemistry:
 
     def step(self, state, tick: int) -> None:
         h, w = state.shape
-        # dead-era acceleration: no living polymers -> coarser chemistry stepping.
-        # Pure function of current state (replayable); logged as a mode change.
-        scale = 10.0 if getattr(state, "p_count", 0) == 0 else 1.0
-        if scale != self.dt_scale:
-            reason = "dead-era" if scale > 1 else "life present"
-            log.info("chemistry dt mode change", extra={"dt_scale": scale, "reason": reason})
-            self.dt_scale = scale
+        # v0.2: no dead-era law switch. v0.1 multiplied every rate by 10 while nothing
+        # was alive and reverted when life appeared — a state-dependent change of
+        # physics at exactly the event under study (docs/DECISIONS.md, 2026-09-25).
         wp.launch(k_chemistry, dim=(h, w), inputs=[
             state.species, state.temp, state.light_water, state.catalyst, state.e_chem,
             state.water_depth,

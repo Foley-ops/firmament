@@ -92,14 +92,16 @@ class TestPanelsOnDeadWorld:
         client, sched, _ = dead_world
         r = client.post("/api/console/rain", json={"intensity_mm": 5.0, "radius": 10}).json()
         assert "confirm_token" in r              # step 1: no token -> challenge
-        assert not sched.pending_events
+        assert not sched.mailbox
         r2 = client.post("/api/console/rain",
                          json={"intensity_mm": 5.0, "radius": 10,
                                "confirm_token": r["confirm_token"]}).json()
-        assert "applied_at_tick" in r2
-        assert sched.pending_events              # queued for the tick boundary
+        assert r2["queued"] == "rain"
+        assert sched.mailbox                     # queued for the tick boundary
+        assert sched.events.count == 0           # nothing logged until it is applied
         sched.tick_once()                        # applies without error on dead world
-        assert not sched.pending_events
+        assert not sched.mailbox
+        assert [e["event"] for e in sched.events.read_all()] == ["rain"]
 
     def test_developer_gate(self, dead_world):
         client, _, _ = dead_world

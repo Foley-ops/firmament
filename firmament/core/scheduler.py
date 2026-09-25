@@ -20,7 +20,9 @@ class Scheduler:
         self.run = run
         self.modules: list = []
         self.instruments: list = []          # read-only observers, may not touch state
-        self.pending_events: list = []       # operator events applied on tick boundary
+        self.mailbox: list = []              # causal commands, committed at tick boundary
+        self.replay_queue: list = []         # logged causal history being re-applied
+        self.developer_allowed = False       # set only by the --developer CLI flag
         self.mode = "unbounded"
         self.target_tps = 30.0
         self.step_budget = 0
@@ -31,9 +33,9 @@ class Scheduler:
         self.modules.append(fn)
 
     def tick_once(self) -> None:
+        from firmament.operator import causal
         s = self.state
-        while self.pending_events:                      # events apply on tick boundary
-            self.pending_events.pop(0)(s, s.tick)
+        causal.apply_due(self)                         # causal commands: tick boundary only
         for fn in self.modules:
             fn(s, s.tick)
         s.tick += 1

@@ -64,6 +64,7 @@ class State:
         self.next_poly_id = 1                # 0 reserved; seed gets id 1
 
         self.tick = 0
+        self.causal_n = 0                    # causal commands applied into this state
         self.gpu_lock = threading.Lock()   # serializes graph capture vs API-thread reads
 
     # ---- host access helpers ----

@@ -2,10 +2,37 @@
 from __future__ import annotations
 
 import json
+import platform
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
 RUNS = Path("runs")
+
+
+def provenance(cfg) -> dict:
+    """Everything needed to say exactly which code and rules produced a run."""
+    from firmament.config import file_sha256
+    from firmament.core.polymers import RULESET
+
+    def git(*a):
+        try:
+            return subprocess.run(["git", *a], capture_output=True, text=True,
+                                  cwd=Path(__file__).resolve().parents[2]).stdout.strip()
+        except OSError:
+            return None
+    import numpy
+    import warp
+    return {
+        "ruleset": RULESET,
+        "git_commit": git("rev-parse", "HEAD"),
+        "git_dirty": bool(git("status", "--porcelain", "--untracked-files=no")),
+        "rule_files_sha256": {k: file_sha256(p) for k, p in cfg.rule_files().items()},
+        "config_hash": cfg.hash(),
+        "python": platform.python_version(), "numpy": numpy.__version__,
+        "warp": warp.config.version, "platform": platform.platform(),
+    }
 
 
 def new_run_id(cfg) -> str:
@@ -21,12 +48,24 @@ def create(cfg, run_id: str | None = None, parent: str | None = None) -> Path:
             k += 1
         run_id = f"{run_id}.{k}"
     d = RUNS / run_id
-    for sub in ("logs", "snapshots", "metrics", "reports"):
+    for sub in ("logs", "snapshots", "metrics", "reports", "rules"):
         (d / sub).mkdir(parents=True, exist_ok=True)
-    (d / "config.yaml").write_text(cfg.canonical_yaml())      # frozen copy
+    # freeze the rule files inside the run; the run's config points at these copies so
+    # resume/replay never read whatever happens to be in the workspace later
+    frozen = cfg.model_copy(deep=True)
+    for key, src in cfg.rule_files().items():
+        dst = d / "rules" / f"{key}.yaml"
+        if Path(src).resolve() != dst.resolve():
+            shutil.copyfile(src, dst)
+        if key == "chemistry":
+            frozen.chemistry.file = str(dst)
+        else:
+            frozen.polymers.genetic_code = str(dst)
+    (d / "config.yaml").write_text(frozen.canonical_yaml())
     (d / "events.jsonl").touch()
+    (d / "analysis.jsonl").touch()
     meta = {"run_id": run_id, "parent": parent, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "touched": False}
+            "touched": False, "provenance": provenance(cfg)}
     (d / "meta.json").write_text(json.dumps(meta, indent=1))
     return d
 

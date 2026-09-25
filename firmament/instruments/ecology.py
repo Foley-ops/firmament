@@ -5,7 +5,7 @@ import numpy as np
 
 
 def sample(v, cfg) -> dict:
-    alive = np.nonzero(v["p_state"] > 0)[0]
+    alive = np.nonzero(((v["p_state"] >= 1) & (v["p_state"] <= 3)))[0]
     copies = v["recent_copies"]
     # P~P spent on copying this tick ~ monomers added; decay path is chemistry's
     pp_copy = sum(e[3] for e in copies) * cfg.polymers.copy_energy_per_monomer if copies else 0

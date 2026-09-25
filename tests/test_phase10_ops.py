@@ -52,29 +52,21 @@ def test_crash_recovery(isolated_cwd, device):
     assert any("tick_000000000070" in s.name for s in snaps)   # 30 + 40
 
 
-def test_dead_era_acceleration_engages_and_reverts(tmp_path, device, caplog):
-    import logging
+def test_chemistry_law_does_not_depend_on_whether_life_exists(tmp_path, device):
+    """v0.1 multiplied every chemistry rate by 10 while nothing was alive. v0.2: the
+    same chemistry state must evolve identically whatever the polymer count says."""
+    import numpy as np
 
-    import warp as wp
-
-    from tests.test_phase5_polymers import SEED_SEQ
-
-    cfg = tiny_cfg(n=16, cap=500)
-    state, sched = build_test_sim(cfg, device, tmp_path / "r")
-    with caplog.at_level(logging.INFO, logger="firmament.chemistry"):
-        sched.tick_once()
-        assert sched.chem.dt_scale == 10.0              # dead world -> 10x chemistry
-        # give the seed cell materials, then place life
-        spec = state.species.numpy()
-        for m in ("M1", "M2", "M3", "M4"):
-            spec[sched.chem.index[m], 8, 8] += 100
-        state.species = wp.array(spec, dtype=wp.int32, device=device)
-        from firmament.operator.console import place_seed
-        place_seed(sched, state, SEED_SEQ, 8, 8)
-        sched.tick_once()                               # poly.step sets p_count=1
-        sched.tick_once()                               # chemistry sees life
-        assert sched.chem.dt_scale == 1.0
-    assert any("chemistry dt mode change" in r.message for r in caplog.records)
+    worlds = []
+    for label, pretend_alive in (("dead", 0), ("alive", 5)):
+        cfg = tiny_cfg(n=16, cap=500)
+        state, sched = build_test_sim(cfg, device, tmp_path / label)
+        sched.modules = [sched.modules[3]]            # chemistry only
+        state.p_count = pretend_alive
+        for _ in range(50):
+            sched.tick_once()
+        worlds.append(state.species.numpy())
+    assert np.array_equal(worlds[0], worlds[1])
 
 
 def test_daily_report_readable(tmp_path, device):

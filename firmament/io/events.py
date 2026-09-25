@@ -1,7 +1,9 @@
-"""Append-only JSONL event log: seed placement (#0), operator actions, milestones, EDITs.
+"""Append-only JSONL logs.
 
-Events are part of a run's causal definition: (config, seed, event log) fully
-determines the world. Replay reads the log and re-applies each event at its tick.
+Two separate logs with separate counters (docs/DECISIONS.md, 2026-09-25):
+- events.jsonl   — CAUSAL history (seed, natural events, developer EDITs). Together with
+                   the frozen config and seed it fully determines the world.
+- analysis.jsonl — DERIVED observations (milestones, novelty). Never read by physics.
 """
 from __future__ import annotations
 
@@ -16,22 +18,22 @@ log = get("events")
 class EventLog:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self.path.touch(exist_ok=True)
+        self.count = sum(1 for x in open(self.path) if x.strip())
         self.f = open(self.path, "a", buffering=1)
-        self.count = sum(1 for _ in open(self.path)) if self.path.exists() else 0
 
-    def append(self, event: str, tick: int, component: str = "operator", **fields) -> dict:
+    def append(self, event: str, tick: int, component: str = "operator", n: int | None = None,
+               **fields) -> dict:
+        n = self.count if n is None else n
         rec = {"run_id": CLOCK.run_id, "tick": tick, "sim_time": CLOCK.sim_time(),
-               "component": component, "level": "INFO", "event": event, "n": self.count,
-               **fields}
+               "component": component, "level": "INFO", "event": event, "n": n, **fields}
         self.f.write(json.dumps(rec, default=str) + "\n")
         self.f.flush()
         self.count += 1
-        log.info(f"event {event}", extra=fields | {"event_n": rec["n"]})
+        log.info(f"event {event}", extra={"event_n": n, "log": self.path.name})
         return rec
 
     def read_all(self) -> list[dict]:
-        if not self.path.exists():
-            return []
         return [json.loads(line) for line in open(self.path) if line.strip()]
 
     def flush(self) -> None:
@@ -40,29 +42,21 @@ class EventLog:
     def tail(self, n: int = 50) -> list[dict]:
         return self.read_all()[-n:]
 
+    def truncate_after(self, tick: int) -> int:
+        """Drop records newer than `tick` (used on resume: the resumed process regenerates
+        them deterministically, so keeping them would duplicate history)."""
+        keep = [r for r in self.read_all() if r["tick"] <= tick]
+        dropped = self.count - len(keep)
+        self.f.close()
+        with open(self.path, "w") as f:
+            for r in keep:
+                f.write(json.dumps(r, default=str) + "\n")
+        self.count = len(keep)
+        self.f = open(self.path, "a", buffering=1)
+        return dropped
 
-def replay_events(sched, events_path: Path) -> None:
-    """Queue logged operator events for re-application at their original ticks."""
-    from firmament.operator import console
 
-    pending = []
-    for rec in EventLog(events_path).read_all():
-        if rec.get("component") != "operator":
-            continue                       # milestones re-emerge on their own
-        if rec["tick"] < sched.state.tick:
-            continue                       # already inside the snapshot
-        pending.append(rec)
-    pending.sort(key=lambda r: (r["tick"], r["n"]))
-    sched.replay_queue = pending
-    if pending:
-        orig = sched.tick_once
-
-        def tick_with_replay():
-            # live semantics: an event logged for tick T is applied at the top of the
-            # tick_once that advances T-1 -> T
-            while sched.replay_queue and sched.replay_queue[0]["tick"] == sched.state.tick + 1:
-                rec = sched.replay_queue.pop(0)
-                console.apply_event(sched, rec, replaying=True)
-            orig()
-        sched.tick_once = tick_with_replay
-    log.info("replay queue loaded", extra={"n_events": len(pending)})
+def replay_events(sched, events_path: Path) -> int:
+    """Queue the causal history not yet contained in the current state for replay."""
+    from firmament.operator import causal
+    return causal.load_replay(sched, events_path)

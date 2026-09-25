@@ -53,6 +53,7 @@ def cmd_run(args):
     log.info("run created", extra={"config": str(args.config), "device": args.device})
     state, sched = build_sim(cfg, run_dir, args.device)
     _attach_io(cfg, run_dir, state, sched)
+    sched.developer_allowed = bool(args.developer)
     _serve(sched, run_dir, args)      # always on: the GUI attaches on demand
     _guarded_loop(sched, cfg, run_dir, state, args.ticks)
 
@@ -63,18 +64,20 @@ def _attach_io(cfg, run_dir, state, sched):
     from firmament.io.lineage import LineageDB
     from firmament.io.snapshot import SnapshotManager
 
-    sched.events = EventLog(run_dir / "events.jsonl")
+    sched.events = EventLog(run_dir / "events.jsonl")        # causal history
+    sched.analysis = EventLog(run_dir / "analysis.jsonl")    # derived observations
     sched.lineage = LineageDB(run_dir / "lineage.sqlite")
     sched.poly.lineage = sched.lineage
     snaps = SnapshotManager(run_dir / "snapshots", cfg)
     sched.snapshots = snaps
     every = max(1, int(cfg.run.snapshot_every_sim_days * 86400 / cfg.run.dt_seconds))
+    attach_instruments(sched, cfg, run_dir)       # before the snapshot hook: a snapshot
+                                                  # at tick T includes tick T's analysis
 
     def maybe_snapshot(s, tick):
         if tick > 0 and tick % every == 0:
             snaps.save(s, sched)
     sched.instruments.append(maybe_snapshot)
-    attach_instruments(sched, cfg, run_dir)
 
 
 def _guarded_loop(sched, cfg, run_dir, state, ticks):
@@ -102,6 +105,11 @@ def _flush(sched):
 
 
 def _load_from_snapshot(args, run_dir: Path, snap=None):
+    """Load a snapshot and reconstruct everything after it deterministically: analysis
+    state is restored, derived logs written after the snapshot are dropped (the resumed
+    process regenerates them identically), and logged causal history after the snapshot
+    is queued for replay at its original ticks."""
+    from firmament.io import events as ev
     from firmament.io.snapshot import SnapshotManager
     cfg = Config.load(run_dir / "config.yaml")
     CLOCK.run_id = run_dir.name
@@ -110,6 +118,14 @@ def _load_from_snapshot(args, run_dir: Path, snap=None):
     snaps = SnapshotManager(run_dir / "snapshots", cfg)
     snaps.load(state, sched, snap)
     _attach_io(cfg, run_dir, state, sched)
+    sched.sampler.load_state(snaps.loaded_meta.get("analysis_state", {}))
+    dropped = sched.analysis.truncate_after(state.tick)
+    dropped_rows = sched.metrics.truncate_after(state.tick)
+    n = ev.replay_events(sched, run_dir / "events.jsonl")
+    get("cli").info("snapshot loaded for continuation", extra={
+        "tick": state.tick, "causal_n": state.causal_n, "causal_to_replay": n,
+        "analysis_dropped": dropped, "metric_rows_dropped": dropped_rows})
+    sched.developer_allowed = bool(getattr(args, "developer", False))
     return cfg, state, sched
 
 
@@ -124,10 +140,10 @@ def cmd_resume(args):
         try:
             _guarded_loop(sched, cfg, run_dir, state, args.ticks)
             return
-        except Exception:
+        except Exception as e:
             attempts += 1
-            if not getattr(args, "auto_restart", False):
-                raise
+            if not getattr(args, "auto_restart", False) or not _is_transient(e):
+                raise                 # deterministic crashes replay identically: never retry
             # a CUDA-level error poisons the GPU context: in-process retry is futile.
             # Re-exec a fresh process (marker file counts attempts across execs).
             marker = run_dir / ".restart_count"
@@ -142,6 +158,14 @@ def cmd_resume(args):
             _os.execv(_sys.executable, [_sys.executable, "-m", "firmament.cli"] + _sys.argv[1:])
 
 
+def _is_transient(e: Exception) -> bool:
+    """Only device/driver faults can differ on retry. Everything else (AuditError,
+    capacity exhaustion, bugs) is a deterministic function of the snapshot and would
+    reproduce exactly, so retrying just burns hours."""
+    msg = repr(e)
+    return "Warp error" in msg or "CUDA" in msg or "cuda" in msg
+
+
 def cmd_fork(args):
     from firmament.io.snapshot import fork_run
     new_dir = fork_run(rundir.RUNS / args.run, args.snapshot)
@@ -149,13 +173,34 @@ def cmd_fork(args):
 
 
 def cmd_replay(args):
-    run_dir = rundir.RUNS / args.run
-    cfg, state, sched = _load_from_snapshot(args, run_dir, args.snapshot)
+    """Re-derive a later state from a snapshot + the causal log, writing only to
+    runs/_replays/<run>@<tick>/ (the original run is never touched). With --verify,
+    compare byte-for-byte against the run's own snapshot at that tick."""
+    import numpy as np
+    import zarr
+
     from firmament.io.events import replay_events
+    from firmament.io.snapshot import SnapshotManager
+    run_dir = rundir.RUNS / args.run
+    cfg = Config.load(run_dir / "config.yaml")
+    state, sched = build_sim(cfg, run_dir, args.device)
+    SnapshotManager(run_dir / "snapshots", cfg).load(
+        state, sched, int(args.snapshot) if args.snapshot else None)
+    out = rundir.RUNS / "_replays" / f"{args.run}@{args.to_tick}"
+    out.mkdir(parents=True, exist_ok=True)
+    sched.events = None                      # replay applies history; it never writes it
     replay_events(sched, run_dir / "events.jsonl")
-    sched.loop(max_ticks=args.to_tick - state.tick)
-    sched.snapshots.save(state, sched)
-    print(f"replayed to tick {state.tick}")
+    while state.tick < args.to_tick:
+        sched.tick_once()
+    path = SnapshotManager(out, cfg).save(state)
+    print(f"replayed to tick {state.tick} -> {path}")
+    if args.verify:
+        ref = run_dir / "snapshots" / path.name
+        a, b = zarr.open_group(str(ref), mode="r"), zarr.open_group(str(path), mode="r")
+        bad = [k for k in a.array_keys() if not np.array_equal(a[k][:], b[k][:])]
+        print("VERIFY: identical" if not bad else f"VERIFY: MISMATCH in {bad}")
+        if bad:
+            sys.exit(1)
 
 
 def cmd_seed(args):
@@ -217,8 +262,9 @@ def _serve(sched, run_dir, args):
                 s2.bind(("", 0))
                 port = s2.getsockname()[1]
     app = make_app(sched, run_dir)
+    host = "0.0.0.0" if getattr(args, "lan", False) else "127.0.0.1"   # LAN is opt-in
     t = threading.Thread(
-        target=uvicorn.run, kwargs=dict(app=app, host="0.0.0.0", port=port, log_level="warning"),
+        target=uvicorn.run, kwargs=dict(app=app, host=host, port=port, log_level="warning"),
         daemon=True)
     t.start()
     run_dir_abs = Path(run_dir).resolve()
@@ -236,7 +282,7 @@ def _serve(sched, run_dir, args):
         except OSError:
             pass                      # best-effort exit cleanup; liveness probe covers stale pids
     atexit.register(_clear)
-    get("cli").info("api serving", extra={"port": port})
+    get("cli").info("api serving", extra={"port": port, "host": host})
 
 
 def main(argv=None):
@@ -246,16 +292,17 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("--config", required=True)
     r.add_argument("--ticks", type=int, default=None)
-    r.add_argument("--serve", action="store_true")
     r.add_argument("--port", type=int, default=8000)
+    r.add_argument("--lan", action="store_true", help="expose the GUI on the LAN (default: localhost)")
     r.add_argument("--developer", action="store_true")
     r.set_defaults(fn=cmd_run)
     for name, fn in (("resume", cmd_resume),):
         s = sub.add_parser(name)
         s.add_argument("--run", required=True)
         s.add_argument("--ticks", type=int, default=None)
-        s.add_argument("--serve", action="store_true")
         s.add_argument("--port", type=int, default=8000)
+        s.add_argument("--lan", action="store_true")
+        s.add_argument("--developer", action="store_true")
         s.add_argument("--auto-restart", action="store_true", dest="auto_restart")
         s.set_defaults(fn=fn)
     f = sub.add_parser("fork")
@@ -266,6 +313,7 @@ def main(argv=None):
     rp.add_argument("--run", required=True)
     rp.add_argument("--snapshot", default=None)
     rp.add_argument("--to-tick", type=int, required=True)
+    rp.add_argument("--verify", action="store_true")
     rp.set_defaults(fn=cmd_replay)
     sd = sub.add_parser("seed")
     sd.add_argument("--run", required=True)

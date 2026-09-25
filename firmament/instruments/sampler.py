@@ -23,7 +23,7 @@ class ReadOnlyView(dict):
                      "p_seq", "elevation", "sediment"):
             a = getattr(s, name, None)
             if a is not None:
-                arr = a.numpy()
+                arr = a.numpy().copy()        # CPU .numpy() aliases live memory
                 arr.setflags(write=False)
                 v[name] = arr
         v["tick"] = s.tick
@@ -43,6 +43,16 @@ class Sampler:
         self.nov = novelty.Novelty(sched)
         self.pending_copies: list = []       # accumulated EVERY tick so milestones
                                              # never depend on sampling alignment
+        sched.sampler = self
+
+    def state_dict(self) -> dict:
+        return {"milestones": self.mile.state_dict(), "novelty": self.nov.state_dict(),
+                "pending_copies": [list(map(int, e)) for e in self.pending_copies]}
+
+    def load_state(self, d: dict) -> None:
+        self.mile.load_state(d.get("milestones", {}))
+        self.nov.load_state(d.get("novelty", {}))
+        self.pending_copies = [tuple(e) for e in d.get("pending_copies", [])]
 
     def __call__(self, s, tick: int) -> None:
         poly = getattr(self.sched, "poly", None)

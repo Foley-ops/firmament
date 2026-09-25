@@ -1,11 +1,12 @@
 """Developer mode: full edit power, and using it has a visible cost.
 
-First use prints a loud warning, writes an EDIT event, and marks the run (and all
-future forks) TOUCHED. Principle 3 in code.
+Edits are causal commands (firmament/operator/causal.py): logged as EDIT with full
+parameters, so replay reproduces them exactly. Committing one live prints a loud
+warning and marks the run (and all future forks) TOUCHED. Principle 3 in code.
+Only available when the sim was started with --developer (sched.developer_allowed).
 """
 from __future__ import annotations
 
-import numpy as np
 import warp as wp
 
 from firmament.io import rundir
@@ -16,64 +17,65 @@ log = get("developer")
 _warned = False
 
 
-def _mark(sched, description: str, **fields) -> None:
+def mark_touched(sched, params: dict) -> None:
     global _warned
     if not _warned:
         print("\n" + "!" * 70)
         print("!!  DEVELOPER EDIT — this run is now permanently marked TOUCHED  !!")
         print("!" * 70 + "\n")
         _warned = True
-    sched.events.append("EDIT", sched.state.tick, component="developer",
-                        description=description, **fields)
-    rundir.mark_touched(sched.run)
-    log.warning("EDIT applied", extra={"description": description} | fields)
+    if getattr(sched, "run", None) is not None and (sched.run / "meta.json").exists():
+        rundir.mark_touched(sched.run)
+    log.warning("EDIT applied", extra={"params": params})
 
 
-def set_field(sched, field: str, x: int, y: int, value: float, description: str = "") -> None:
+def _edit(sched, action: str, description: str, **fields) -> dict:
+    from firmament.operator import causal
+    return causal.commit_now(sched, "EDIT", {"action": action,
+                                             "description": description or action, **fields})
+
+
+def set_field(sched, field: str, x: int, y: int, value: float, description: str = "") -> dict:
+    return _edit(sched, "set_field", description, field=field, x=x, y=y, value=value)
+
+
+def set_species(sched, species: str, x: int, y: int, count: int, description: str = "") -> dict:
+    return _edit(sched, "set_species", description, species=species, x=x, y=y, count=count)
+
+
+def edit_polymer(sched, slot: int, sequence: str | None = None, description: str = "") -> dict:
+    return _edit(sched, "edit_polymer", description, slot=slot, sequence=sequence)
+
+
+def apply_edit(sched, p: dict) -> None:
     s = sched.state
-    arr = getattr(s, field)
-    a = arr.numpy()
-    if a.ndim == 3:
-        a[:, y, x] = value
+    action = p["action"]
+    if action == "set_field":
+        arr = getattr(s, p["field"])
+        a = arr.numpy().copy()
+        if a.ndim == 3:
+            a[:, p["y"], p["x"]] = p["value"]
+        else:
+            a[p["y"], p["x"]] = p["value"]
+        setattr(s, p["field"], wp.array(a, dtype=arr.dtype, device=s.device))
+    elif action == "set_species":
+        a = s.species.numpy().copy()
+        a[sched.chem.index[p["species"]], p["y"], p["x"]] = p["count"]
+        s.species = wp.array(a, dtype=wp.int32, device=s.device)
+    elif action == "edit_polymer":
+        from firmament.operator.console import _parse_seq
+        slot = p["slot"]
+        if p.get("sequence") is not None:
+            seq = _parse_seq(p["sequence"])
+            sq = s.p_seq.numpy().copy()
+            sq[slot, :] = 0
+            sq[slot, :len(seq)] = seq
+            s.p_seq = wp.array(sq, dtype=wp.uint8, device=s.device)
+            ln = s.p_len.numpy().copy()
+            ln[slot] = len(seq)
+            s.p_len = wp.array(ln, dtype=wp.int32, device=s.device)
+            mo = s.p_motifs.numpy().copy()
+            mo[slot] = sched.poly.motif_mask_host(seq)
+            s.p_motifs = wp.array(mo, dtype=wp.int32, device=s.device)
     else:
-        a[y, x] = value
-    setattr(s, field, wp.array(a, dtype=arr.dtype, device=s.device))
-    _mark(sched, description or f"set {field}[{y},{x}]={value}", field=field, cell=[x, y], value=value)
-
-
-def set_species(sched, species: str, x: int, y: int, count: int, description: str = "") -> None:
-    s = sched.state
-    k = sched.chem.index[species]
-    a = s.species.numpy()
-    a[k, y, x] = count
-    s.species = wp.array(a, dtype=wp.int32, device=s.device)
-    _mark(sched, description or f"set species {species}[{y},{x}]={count}",
-          species=species, cell=[x, y], count=count)
-
-
-def edit_polymer(sched, slot: int, sequence: str | None = None, description: str = "") -> None:
-    s = sched.state
-    if sequence is not None:
-        sym = {"M1": 1, "M2": 2, "M3": 3, "M4": 4}
-        toks = [sequence[i:i + 2] for i in range(0, len(sequence), 2)]
-        seq = np.array([sym[t] for t in toks], dtype=np.uint8)
-        sq = s.p_seq.numpy()
-        sq[slot, :] = 0
-        sq[slot, :len(seq)] = seq
-        s.p_seq = wp.array(sq, dtype=wp.uint8, device=s.device)
-        ln = s.p_len.numpy()
-        ln[slot] = len(seq)
-        s.p_len = wp.array(ln, dtype=wp.int32, device=s.device)
-        # rescan motifs so state stays coherent
-        poly = sched.poly
-        mask = 0
-        for mi, row in enumerate(poly.motif_np):
-            k = len(row)
-            for pos in range(len(seq) - k + 1):
-                if np.array_equal(seq[pos:pos + k], row):
-                    mask |= 1 << mi
-                    break
-        mo = s.p_motifs.numpy()
-        mo[slot] = mask
-        s.p_motifs = wp.array(mo, dtype=wp.int32, device=s.device)
-    _mark(sched, description or f"edit polymer slot {slot}", slot=slot, sequence=sequence)
+        raise ValueError(f"unknown developer action: {action}")

@@ -67,5 +67,19 @@ class Config(BaseModel):
     def canonical_yaml(self) -> str:
         return yaml.safe_dump(self.model_dump(mode="json"), sort_keys=True)
 
+    def rule_files(self) -> dict[str, str]:
+        return {"chemistry": self.chemistry.file, "genetic_code": self.polymers.genetic_code}
+
     def hash(self) -> str:
-        return hashlib.sha256(self.canonical_yaml().encode()).hexdigest()[:8]
+        """Identity of the run's physics: config values plus the CONTENTS of every rule
+        file (paths excluded), so editing a rules file can never be mistaken for the
+        same world."""
+        d = self.model_dump(mode="json")
+        d["chemistry"]["file"] = file_sha256(self.chemistry.file)
+        d["polymers"]["genetic_code"] = file_sha256(self.polymers.genetic_code)
+        blob = yaml.safe_dump(d, sort_keys=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:8]
+
+
+def file_sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()

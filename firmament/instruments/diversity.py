@@ -8,7 +8,7 @@ import numpy as np
 
 
 def seq_hashes(v) -> np.ndarray:
-    alive = np.nonzero(v["p_state"] > 0)[0]
+    alive = np.nonzero(((v["p_state"] >= 1) & (v["p_state"] <= 3)))[0]
     if len(alive) == 0:
         return np.array([], dtype=np.uint64)
     seqs = v["p_seq"][alive]
@@ -36,8 +36,10 @@ def sample(v) -> dict:
     uniq, counts = np.unique(hashes, return_counts=True)
     p = counts / n
     entropy = float(-(p * np.log2(p)).sum())
-    alive = np.nonzero(v["p_state"] > 0)[0]
-    blob = v["p_seq"][alive].tobytes()
+    alive = np.nonzero(((v["p_state"] >= 1) & (v["p_state"] <= 3)))[0]
+    seqs = v["p_seq"][alive].copy()
+    seqs[np.arange(seqs.shape[1])[None, :] >= v["p_len"][alive][:, None]] = 0  # stale slot bytes
+    blob = seqs.tobytes()
     comp = len(zlib.compress(blob, 6))
     masks = v["p_motifs"][alive]
     census = {}

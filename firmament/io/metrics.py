@@ -33,6 +33,24 @@ class MetricsWriter:
         self.part += 1
         self.buf.clear()
 
+    def truncate_after(self, tick: int) -> int:
+        """Drop rows newer than `tick` (resume regenerates them identically)."""
+        self.buf = [r for r in self.buf if r["tick"] <= tick]
+        t = self.read_all()
+        if t is None:
+            return 0
+        rows = t.to_pylist()
+        keep = [r for r in rows if r["tick"] <= tick]
+        if len(keep) == len(rows):
+            return 0
+        for f in self.dir.glob("part_*.parquet"):
+            f.unlink()
+        self.part = 0
+        if keep:
+            pq.write_table(pa.Table.from_pylist(keep), self.dir / "part_000000.parquet")
+            self.part = 1
+        return len(rows) - len(keep)
+
     def read_all(self):
         import pyarrow.dataset as ds
         files = sorted(self.dir.glob("part_*.parquet"))

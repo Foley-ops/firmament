@@ -82,7 +82,6 @@ def make_app(sched, run_dir: Path) -> FastAPI:
     sched.view_layers = ["elevation", "water", "temp", "light", "polymer_density"]
     sched.view_ds = max(1, sched.state.shape[0] // 256)
     tokens: dict[str, dict] = {}
-    developer_enabled = {"on": False}
 
     def refresh_view(s, tick):
         if sched.viewers > 0:
@@ -229,7 +228,11 @@ def make_app(sched, run_dir: Path) -> FastAPI:
 
     @app.get("/api/events")
     def events(tail: int = 200):
-        return sched.events.tail(tail) if getattr(sched, "events", None) else []
+        recs = []
+        for log_ in (getattr(sched, "events", None), getattr(sched, "analysis", None)):
+            if log_ is not None:
+                recs += log_.tail(tail)
+        return sorted(recs, key=lambda r: (r["tick"], r["component"]))[-tail:]
 
     # ---------- god console (confirm step) & developer mode ----------
     @app.post("/api/console/{event}")
@@ -244,27 +247,30 @@ def make_app(sched, run_dir: Path) -> FastAPI:
         held = tokens.pop(tok, None)
         if held is None or held["event"] != event or time.time() - held["ts"] > 300:
             return JSONResponse({"error": "invalid or expired confirm token"}, status_code=400)
-        rec = console.request(sched, event, held["params"])
-        return {"applied_at_tick": rec["tick"], "event_n": rec["n"]}
+        try:
+            console.request(sched, event, held["params"])
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"queued": event, "applies_at": "next tick boundary"}
 
     @app.post("/api/developer/enable")
     def dev_enable(body: dict):
-        developer_enabled["on"] = bool(body.get("on", False))
-        return {"developer": developer_enabled["on"],
-                "warning": "edits will permanently mark this run TOUCHED"}
+        # developer power is granted ONLY by starting the sim with --developer; the
+        # network can never switch it on
+        return {"developer": bool(sched.developer_allowed),
+                "warning": "edits permanently mark this run TOUCHED"
+                if sched.developer_allowed else "start the sim with --developer to allow edits"}
 
     @app.post("/api/developer/{action}")
     def dev_cmd(action: str, body: dict):
-        if not developer_enabled["on"]:
-            return JSONResponse({"error": "developer mode not enabled"}, status_code=403)
-        from firmament.operator import developer as dev
-        fn = {"set_field": dev.set_field, "set_species": dev.set_species,
-              "edit_polymer": dev.edit_polymer}.get(action)
-        if fn is None:
+        if not sched.developer_allowed:
+            return JSONResponse({"error": "developer mode requires the --developer flag"},
+                                status_code=403)
+        if action not in ("set_field", "set_species", "edit_polymer"):
             return JSONResponse({"error": "unknown action"}, status_code=404)
-        def run():
-            fn(sched, **body)
-        sched.pending_events.append(lambda s, t: run())
+        from firmament.operator import causal
+        causal.submit(sched, "EDIT", {"action": action,
+                                      "description": body.pop("description", action), **body})
         return {"queued": action}
 
     @app.get("/api/meta")

@@ -8,11 +8,10 @@ firmament run --config configs/world_small.yaml            # 256², shakeout
 firmament run --config configs/world_default.yaml          # 1024²
 ```
 Creates `runs/<run_id>/` (frozen config, logs, snapshots, metrics, events, lineage).
-`--ticks N` bounds the run; omit for indefinite. **Every sim always exposes its
-read-only GUI bridge** (preferred `--port`, else an automatic free port, recorded in
-`meta.json`); open any running sim's port in a browser and the run picker lists every
-run on the machine — attaching to another running sim redirects to its own bridge.
-No restart is ever needed to view a world.
+`--ticks N` bounds the run; omit for indefinite. **Every sim always exposes its GUI
+bridge** (preferred `--port`, else a free port, recorded in `meta.json`) — on
+**localhost only** unless started with `--lan`. Developer edits exist only when the
+sim is started with `--developer`; the network can never switch them on.
 
 ## Stop
 Ctrl-C (or kill). A shutdown snapshot is written on clean exit; an unclean kill loses
@@ -22,14 +21,17 @@ at most `snapshot_every_sim_days` of progress (resume from the last snapshot).
 ```bash
 firmament resume --run <run_id> --auto-restart
 ```
-`--auto-restart` = crash recovery: on any crash a `crash.json` is written (exception,
-tick, last good snapshot) and the run resumes automatically from the last snapshot,
-logging the replayed gap. Three consecutive crashes stop it for a human.
+Resume = load the latest snapshot, restore instrument state, drop derived records newer
+than it (they are regenerated identically), and replay every causal command logged
+after it. The result is indistinguishable from never having stopped.
+`--auto-restart` re-execs a fresh process only for device faults (Warp/CUDA errors);
+deterministic crashes (AuditError, capacity) would reproduce exactly, so they stop for a
+human. `crash.json` records exception, tick and last good snapshot.
 
 ## Fork / replay
 ```bash
 firmament fork --run <run_id> [--snapshot tick_000000001000.zarr]
-firmament replay --run <run_id> --to-tick 200000
+firmament replay --run <run_id> --to-tick 200000 [--snapshot TICK] [--verify]
 ```
 Fork = new run_id + parent pointer; first snapshot equals the parent's; the TOUCHED
 mark propagates. Replay re-applies the event log from a snapshot and must reproduce
@@ -73,6 +75,8 @@ Dead worlds transfer by starting fresh (terrain is config-determined). A living 
 cannot be resized in v0 (`add_land` is a documented refusal) — start the big world
 before seeding. Expect ~50 ticks/s with an active water solver on the RTX 4090.
 
-## Dead-era acceleration
-With zero living polymers the chemistry integrates at 10× dt (logged as a mode
-change, replay-exact, pure function of state). It reverts the moment a polymer exists.
+## Logs
+`events.jsonl` = causal history (seed, natural events, EDITs) — the run's definition.
+`analysis.jsonl` = milestones/novelty — derived, never read by physics. Replay writes only
+to `runs/_replays/`; `--verify` compares against the run's own snapshot byte-for-byte.
+(The v0.1 "dead-era acceleration" was removed: it changed chemistry rates while lifeless.)

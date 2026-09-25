@@ -116,7 +116,8 @@ def test_solubility_precipitation_and_redissolution(tmp_path, device):
     y, x = (int(v) for v in wet[0])
     spec[idx, y, x] = SAT_CAP * 3   # far past saturation: one tick of advection cannot rescue it
     state.species = wp.array(spec, dtype=wp.int32, device=state.device)
-    total0 = int(spec[idx].astype(np.int64).sum()) + int(state.precipitate.numpy()[idx].astype(np.int64).sum())
+    total0 = (int(spec[idx].astype(np.int64).sum())
+              + int(state.precipitate.numpy()[idx].astype(np.int64).sum()))
     sched.tick_once()
     sp = state.species.numpy()[idx]
     pr = state.precipitate.numpy()[idx]

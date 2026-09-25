@@ -15,9 +15,16 @@ class Novelty:
         self.prev_compressed = None
         self.seen_combos: set[int] = set()
 
+    def state_dict(self) -> dict:
+        return {"prev_compressed": self.prev_compressed, "seen_combos": sorted(self.seen_combos)}
+
+    def load_state(self, d: dict) -> None:
+        self.prev_compressed = d.get("prev_compressed")
+        self.seen_combos = set(d.get("seen_combos", []))
+
     def sample(self, v) -> dict:
         import numpy as np
-        alive = np.nonzero(v["p_state"] > 0)[0]
+        alive = np.nonzero(((v["p_state"] >= 1) & (v["p_state"] <= 3)))[0]
         row = {}
         if len(alive) == 0:
             return row
@@ -37,6 +44,6 @@ class Novelty:
         return row
 
     def _emit(self, v, name, **fields) -> None:
-        ev = getattr(self.sched, "events", None)
+        ev = getattr(self.sched, "analysis", None)
         if ev:
             ev.append(name, v["tick"], component="novelty", **fields)

@@ -29,16 +29,20 @@ class SnapshotManager:
         return sorted(int(p.name[5:-5]) for p in self.dir.glob("tick_*.zarr"))
 
     def save(self, state, sched=None) -> Path:
+        # atomic: write to a temp sibling, then rename; the previous good snapshot is
+        # never destroyed before the replacement is complete
         p = self.path(state.tick)
-        if p.exists():
-            shutil.rmtree(p)
-        root = zarr.open_group(str(p), mode="w")
+        tmp = p.with_name(p.name + ".tmp")
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        root = zarr.open_group(str(tmp), mode="w")
         for name, arr in state.to_numpy().items():
             root.create_array(name, data=arr, chunks="auto")
         meta = {
             "tick": state.tick,
             "next_poly_id": state.next_poly_id,
             "solar_mult": getattr(state, "solar_mult", 1.0),
+            "causal_n": state.causal_n,
             "config_hash": self.cfg.hash(),
         }
         if sched is not None and hasattr(sched, "audit"):
@@ -51,7 +55,15 @@ class SnapshotManager:
                 "injected_water": a.injected_water,
                 "injected_energy": a.injected_energy,
             }
+        if sched is not None and hasattr(sched, "sampler"):
+            meta["analysis_state"] = sched.sampler.state_dict()
         root.attrs["meta"] = meta
+        old = p.with_name(p.name + ".old")
+        if p.exists():
+            p.rename(old)
+        tmp.rename(p)
+        if old.exists():
+            shutil.rmtree(old)
         log.info("snapshot saved", extra={"path": str(p), "tick": state.tick})
         return p
 
@@ -74,6 +86,8 @@ class SnapshotManager:
         state.tick = int(meta["tick"])
         state.next_poly_id = int(meta["next_poly_id"])
         state.solar_mult = float(meta.get("solar_mult", 1.0))
+        state.causal_n = int(meta.get("causal_n", 0))
+        self.loaded_meta = meta
         from firmament.io.logging import CLOCK
         CLOCK.tick = state.tick
         if sched is not None and hasattr(sched, "audit") and "audit" in meta:
@@ -104,8 +118,18 @@ def fork_run(parent_dir: Path, snapshot: str | None = None) -> Path:
         raise FileNotFoundError("parent has no snapshots to fork from")
     src = snaps[-1] if snapshot is None else parent_dir / "snapshots" / snapshot
     shutil.copytree(src, new_dir / "snapshots" / src.name)
-    # events up to the fork point carry over (they are part of the causal history)
-    shutil.copyfile(parent_dir / "events.jsonl", new_dir / "events.jsonl")
+    # history is cut AT the fork point: only causal commands already inside the fork
+    # snapshot (n < causal_n) and analysis records up to its tick carry over
+    smeta = zarr.open_group(str(src), mode="r").attrs["meta"]
+    cut_n, cut_tick = int(smeta.get("causal_n", 0)), int(smeta["tick"])
+    for name, keep in (("events.jsonl", lambda r: r["n"] < cut_n),
+                       ("analysis.jsonl", lambda r: r["tick"] <= cut_tick)):
+        srcf = parent_dir / name
+        recs = [json.loads(x) for x in open(srcf) if x.strip()] if srcf.exists() else []
+        with open(new_dir / name, "w") as f:
+            for r in recs:
+                if keep(r):
+                    f.write(json.dumps(r) + "\n")
     (new_dir / "forked_from.json").write_text(json.dumps(
         {"parent": meta["run_id"], "snapshot": src.name}))
     return new_dir

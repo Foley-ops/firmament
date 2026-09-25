@@ -23,12 +23,14 @@ from firmament.io.logging import get
 
 log = get("polymers")
 
+RULESET = "genesis-v0.2"   # bump on ANY change to polymer rules (docs/history/README.md)
 P_BUILD = 5          # child under construction
 EV_CAP = 1 << 16
 EFF = {"replicase": 0, "catalyst": 1, "binder": 2, "membrane": 3, "photoactive": 4,
        "motor": 5, "emit": 6, "sense": 7}
 KH_EA = 80000.0      # J/mol — hydrolysis is strongly temperature-dependent (hot water kills)
 MEM_THRESH = 200     # L units to close a compartment
+MIN_LEN = 2          # v0.2: a polymer needs >= 2 units (one bond); shorter fragments dissolve
 R_GAS = 8.314
 
 
@@ -127,9 +129,11 @@ def k_cell_pass(
             need = ln
             child = p_child[p]
             clen = int(0)
+            has_child = int(0)
             if stt == P_COPYING and child >= 0 and int(p_state[child]) == P_BUILD:
                 clen = p_len[child]
                 need += clen
+                has_child = 1
             if spec[IH2O, i, j] >= need:
                 for x in range(ln):
                     spec[IM1 + int(p_seq[p, x]) - 1, i, j] += 1
@@ -140,7 +144,7 @@ def k_cell_pass(
                     p_state[tm] = wp.uint8(P_FREE)
                     p_partner[tm] = -1
                 p_partner[p] = -1
-                if clen > 0:
+                if has_child == 1:            # v0.2: also empty children (v0.1 leaked them)
                     for x in range(clen):
                         spec[IM1 + int(p_seq[child, x]) - 1, i, j] += 1
                     spec[IH2O, i, j] -= clen
@@ -264,40 +268,61 @@ def k_cell_pass(
                     # 3'->5'): child = reverse complement, so reverse-complement-
                     # palindromic motifs survive copying with function intact
 
-                    r = wp.float64(wp.randf(st))
-                    er = wp.float64(mut_rate)
-                    typ = int(0)
-                    adv = int(1)
-                    grow = int(1)
-                    mut = int(0)
-                    if r < er * wp.float64(0.1):          # deletion
-                        grow = 0
-                        mut = 1
-                    elif r < er * wp.float64(0.2):        # insertion
-                        typ = 1 + wp.min(int(wp.randf(st) * wp.float32(4.0)), 3)
-                        adv = 0
-                        mut = 1
-                    elif r < er:                          # substitution
-                        typ = 1 + wp.min(int(wp.randf(st) * wp.float32(4.0)), 3)
-                        mut = 1
-                    else:
-                        typ = complement(int(p_seq[tmpl, tl - 1 - pos]))
-                    if grow == 1:
-                        im = IM1 + typ - 1
-                        if spec[im, i, j] > 0 and spec[IPP, i, j] >= e_copy:
-                            spec[im, i, j] -= 1
-                            spec[IPP, i, j] -= e_copy
-                            spec[IPI, i, j] += 2 * e_copy
-                            heat += wp.float64(0.02)
-                            p_seq[child, clen] = wp.uint8(typ)
-                            p_len[child] = clen + 1
+                    # v0.2: a polymerase only errs while actually incorporating. If the
+                    # correct next monomer or P~P is missing the copy STALLS with no
+                    # draw at all. (v0.1 rolled a free deletion every starved tick and
+                    # drove every lineage to length 0 — docs/M1_ATTEMPTS.md.)
+                    want = complement(int(p_seq[tmpl, tl - 1 - pos]))
+                    if spec[IM1 + want - 1, i, j] > 0 and spec[IPP, i, j] >= e_copy:
+                        r = wp.float64(wp.randf(st))
+                        er = wp.float64(mut_rate)
+                        typ = want
+                        adv = int(1)
+                        grow = int(1)
+                        mut = int(0)
+                        if r < er * wp.float64(0.1):          # deletion: skip a template base
+                            grow = 0
+                            mut = 1
+                        elif r < er * wp.float64(0.2):        # insertion: extra random base
+                            typ = 1 + wp.min(int(wp.randf(st) * wp.float32(4.0)), 3)
+                            adv = 0
+                            mut = 1
+                        elif r < er:                          # substitution: a WRONG base
+                            k = wp.min(int(wp.randf(st) * wp.float32(3.0)), 2)
+                            typ = 1 + (want - 1 + 1 + k) % 4
+                            mut = 1
+                        if grow == 1:
+                            im = IM1 + typ - 1
+                            if spec[im, i, j] > 0:
+                                spec[im, i, j] -= 1
+                                spec[IPP, i, j] -= e_copy
+                                spec[IPI, i, j] += 2 * e_copy
+                                heat += wp.float64(0.02)
+                                p_seq[child, clen] = wp.uint8(typ)
+                                p_len[child] = clen + 1
+                                p_mut[child] = p_mut[child] + mut
+                                p_copy_pos[p] = pos + adv
+                            # else: the mis-chosen base is absent; nothing happens this tick
+                        else:
                             p_mut[child] = p_mut[child] + mut
                             p_copy_pos[p] = pos + adv
-                        # else: stall (resumes when monomers/energy return)
-                    else:
-                        p_mut[child] = p_mut[child] + mut
-                        p_copy_pos[p] = pos + adv
-                if p_copy_pos[p] >= tl or p_len[child] >= l_max:
+                    # else: stall (resumes when monomers/energy return)
+                done = p_copy_pos[p] >= tl or p_len[child] >= l_max
+                cl = p_len[child]
+                if done and cl < MIN_LEN and spec[IH2O, i, j] >= cl:
+                    # v0.2: under MIN_LEN units is not a polymer — the fragment falls
+                    # apart (unit + H2O -> M); no copy event, copier and template freed
+                    for x in range(cl):
+                        spec[IM1 + int(p_seq[child, x]) - 1, i, j] += 1
+                    spec[IH2O, i, j] -= cl
+                    p_state[child] = wp.uint8(P_DEAD)
+                    p_state[p] = wp.uint8(P_FREE)
+                    if tmpl != p:
+                        p_state[tmpl] = wp.uint8(P_FREE)
+                        p_partner[tmpl] = -1
+                    p_partner[p] = -1
+                    p_child[p] = -1
+                elif done and cl >= MIN_LEN:
                     # complete: child becomes a free polymer
                     p_state[child] = wp.uint8(P_FREE)
                     p_motifs[child] = scan_motifs(p_seq, child, p_len[child], motif, nm, mk)
@@ -504,7 +529,8 @@ def k_transport(p_state: wp.array(dtype=wp.uint8), p_cell: wp.array(dtype=wp.int
     if dest >= 0 and dest != c:
         di = dest / W
         dj = dest % W
-        if comp_id[i, j] == comp_id[di, dj] or (comp_id[i, j] == 0 and comp_id[di, dj] == 0):
+        wet = h0[i, j] > wp.float64(1e-4) and h0[di, dj] > wp.float64(1e-4)
+        if wet and (comp_id[i, j] == comp_id[di, dj] or (comp_id[i, j] == 0 and comp_id[di, dj] == 0)):
             p_cell[p] = dest
 
 
@@ -552,6 +578,15 @@ class Polymers:
             rc = [comp[int(x)] for x in row[::-1]]
             if list(row) != rc:
                 raise ValueError(f"motif {n} is not palindromic under complement")
+
+    def motif_mask_host(self, seq) -> int:
+        """Host mirror of scan_motifs (used by seed placement and developer edits)."""
+        mask = 0
+        for mi, row in enumerate(self.motif_np):
+            k = len(row)
+            if any(np.array_equal(seq[p:p + k], row) for p in range(len(seq) - k + 1)):
+                mask |= 1 << mi
+        return mask
 
     def bind(self, state) -> None:
         s = state
@@ -662,7 +697,9 @@ class Polymers:
         # ---- lineage events out (sorted by child id -> deterministic DB)
         nev = int(self.g_ev_n.numpy()[0])
         if nev > 0:
-            nev = min(nev, EV_CAP)
+            if nev > EV_CAP:
+                raise RuntimeError(f"lineage event buffer overflow: {nev} copies in one tick "
+                                   f"(cap {EV_CAP}) — refusing to lose lineage evidence")
             ch = self.g_ev_child.numpy()[:nev]
             srt = np.argsort(ch, kind="stable")
             evs = list(zip(ch[srt].tolist(), self.g_ev_parent.numpy()[:nev][srt].tolist(),

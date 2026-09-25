@@ -18,8 +18,10 @@ def write_report(run_dir: Path) -> Path:
     run_dir = Path(run_dir)
     meta = json.loads((run_dir / "meta.json").read_text())
     t = MetricsWriter(run_dir / "metrics").read_all()
-    events = [json.loads(x) for x in open(run_dir / "events.jsonl") if x.strip()] \
-        if (run_dir / "events.jsonl").exists() else []
+    events = []
+    for name in ("events.jsonl", "analysis.jsonl"):
+        if (run_dir / name).exists():
+            events += [json.loads(x) for x in open(run_dir / name) if x.strip()]
     lines = [f"# {meta['run_id']} — daily report ({time.strftime('%Y-%m-%d %H:%M')})", ""]
     if meta.get("touched"):
         lines.append("**⚠ TOUCHED — this run has developer edits.**\n")

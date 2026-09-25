@@ -56,6 +56,7 @@ def build_test_sim(cfg, device: str, run_dir: Path):
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "snapshots").mkdir(exist_ok=True)
     sched.events = EventLog(run_dir / "events.jsonl")
+    sched.analysis = EventLog(run_dir / "analysis.jsonl")
     sched.lineage = LineageDB(run_dir / "lineage.sqlite")
     sched.poly.lineage = sched.lineage
     sched.snapshots = SnapshotManager(run_dir / "snapshots", cfg)

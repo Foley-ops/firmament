@@ -5,12 +5,13 @@ import numpy as np
 
 
 def sample(v) -> dict:
-    alive = v["p_state"] > 0
+    alive = ((v["p_state"] >= 1) & (v["p_state"] <= 3))
+    building = int((v["p_state"] == 5).sum())
     lens = v["p_len"][alive]
     n = int(alive.sum())
     comp = v.get("compartment_id")
     n_comp = int((comp > 0).sum()) if comp is not None else 0
-    row = {"n_polymers": n, "n_compartments": n_comp,
+    row = {"n_polymers": n, "n_building": building, "n_compartments": n_comp,
            "membrane_L_total": int(v["membrane_store"].sum()) if "membrane_store" in v else 0}
     if n:
         row |= {"len_mean": float(lens.mean()), "len_max": int(lens.max()),

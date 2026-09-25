@@ -17,19 +17,13 @@ NATURAL_EVENTS = ("rain", "drought", "flood", "earthquake", "volcano", "meteor",
                   "climate", "solar", "add_land", "add_species")
 
 
-def request(sched, event: str, params: dict) -> dict:
-    """Log then queue a natural event for the next tick boundary."""
+def request(sched, event: str, params: dict) -> None:
+    """Queue a natural event; it is logged and applied at the next tick boundary
+    (firmament/operator/causal.py), never from the requesting thread."""
     if event not in NATURAL_EVENTS:
         raise ValueError(f"not a natural event: {event}")
-    tick = sched.state.tick + 1
-    rec = sched.events.append(event, tick, component="operator", params=params)
-    sched.pending_events.append(lambda s, t: _apply(sched, event, params, rec["n"], tick))
-    return rec
-
-
-def apply_event(sched, rec: dict, replaying: bool = False) -> None:
-    sched.pending_events.append(
-        lambda s, t: _apply(sched, rec["event"], rec["params"], rec["n"], rec["tick"]))
+    from firmament.operator import causal
+    causal.submit(sched, event, params)
 
 
 def _region_mask(shape, params) -> np.ndarray:
@@ -40,11 +34,12 @@ def _region_mask(shape, params) -> np.ndarray:
     return (yy - cy) ** 2 + (xx - cx) ** 2 <= r * r
 
 
-def _apply(sched, event: str, params: dict, event_n: int, at_tick: int) -> None:
+def apply_natural(sched, event: str, params: dict, event_n: int, at_tick: int) -> None:
     s = sched.state
     aud = getattr(sched, "audit", None)
     h, w = s.shape
-    # rng keyed by the LOGGED tick, not the application instant -> replay-exact
+    # rng keyed by CAUSAL identity only (tick + causal sequence number); analysis output
+    # has its own log and counter, so observation can never change this draw
     rng = np_rng(sched.cfg.run.seed, SALT_EVENT, at_tick * 1000 + event_n)
     mask = _region_mask(s.shape, params)
     log.info(f"applying {event}", extra={"params": params, "tick": s.tick})
@@ -154,18 +149,37 @@ def _add_species(sched, params: dict) -> None:
         "run with the new chemistry file (v0 limitation)")
 
 
-def place_seed(sched, state, sequence: str, x: int, y: int) -> None:
-    """Event #0: the one act of creation. Logs the full sequence."""
-    import numpy as np
-
+def _parse_seq(sequence: str) -> np.ndarray:
     sym = {"M1": 1, "M2": 2, "M3": 3, "M4": 4}
     toks = [sequence[i:i + 2] for i in range(0, len(sequence), 2)]
-    seq = np.array([sym[t] for t in toks], dtype=np.uint8)
+    return np.array([sym[t] for t in toks], dtype=np.uint8)
+
+
+def place_seed(sched, state, sequence: str, x: int, y: int) -> dict:
+    """Event #0: the one act of creation. Validated first, then committed to the causal
+    log with its full sequence and cell, so replay recreates it exactly."""
+    seq = _parse_seq(sequence)
+    spec = state.species.numpy()
+    counts = np.bincount(seq, minlength=5)
+    for m in range(1, 5):
+        have = int(spec[sched.chem.index[f"M{m}"], y, x])
+        if have < counts[m]:
+            raise RuntimeError(f"seed cell lacks M{m}: have {have}, need {counts[m]}")
+    if int(state.p_state.numpy()[0]) != 0:
+        raise RuntimeError("slot 0 not free — the seed must be the first polymer")
+    from firmament.operator import causal
+    rec = causal.commit_now(sched, "seed_placed", {"sequence": sequence, "cell": [x, y]})
+    log.info("SEED PLACED — event #0", extra={"cell": [x, y], "length": int(len(seq))})
+    return rec
+
+
+def apply_seed(sched, params: dict) -> None:
+    state = sched.state
+    seq = _parse_seq(params["sequence"])
+    x, y = params["cell"]
     poly = sched.poly
     h, w = state.shape
-    cell = y * w + x
     slot = 0
-    assert int(state.p_state.numpy()[slot]) == 0, "slot 0 not free — seed must be first"
     dev = state.device
 
     def setv(arr, val, dtype):
@@ -175,7 +189,7 @@ def place_seed(sched, state, sequence: str, x: int, y: int) -> None:
 
     state.p_id = setv(state.p_id, 1, wp.int64)
     state.p_parent = setv(state.p_parent, 0, wp.int64)
-    state.p_cell = setv(state.p_cell, cell, wp.int32)
+    state.p_cell = setv(state.p_cell, y * w + x, wp.int32)
     sq = state.p_seq.numpy()
     sq[slot, :] = 0
     sq[slot, :len(seq)] = seq
@@ -185,30 +199,14 @@ def place_seed(sched, state, sequence: str, x: int, y: int) -> None:
     state.p_partner = setv(state.p_partner, -1, wp.int32)
     state.p_child = setv(state.p_child, -1, wp.int32)
     state.p_born = setv(state.p_born, state.tick, wp.int64)
-    # motif scan (host mirror of the kernel scan)
-    mask = 0
-    for mi, row in enumerate(poly.motif_np):
-        k = len(row)
-        for pos in range(len(seq) - k + 1):
-            if np.array_equal(seq[pos:pos + k], row):
-                mask |= 1 << mi
-                break
-    state.p_motifs = setv(state.p_motifs, mask, wp.int32)
+    state.p_motifs = setv(state.p_motifs, poly.motif_mask_host(seq), wp.int32)
     state.next_poly_id = max(state.next_poly_id, 2)
-    # the seed's monomers come from the cell's inventory (conservation: the world
-    # must contain the atoms; audit counts chain units). Deduct from species.
+    # the seed is built from the cell's own monomers (conservation); condensation
+    # releases one H2O per chain unit
     chem = sched.chem
     spec = state.species.numpy()
     counts = np.bincount(seq, minlength=5)
-    yx = (y, x)
     for m in range(1, 5):
-        idx = chem.index[f"M{m}"]
-        if spec[idx][yx] < counts[m]:
-            raise RuntimeError(f"seed cell lacks M{m}: have {spec[idx][yx]}, need {counts[m]}")
-        spec[idx][yx] -= counts[m]
-    spec[chem.index["H2O"]][yx] += len(seq)     # condensation releases water
+        spec[chem.index[f"M{m}"], y, x] -= counts[m]
+    spec[chem.index["H2O"], y, x] += len(seq)
     state.species = wp.array(spec, dtype=wp.int32, device=dev)
-    sched.events.append("seed_placed", state.tick, component="operator",
-                        sequence=sequence, cell=[x, y], length=int(len(seq)),
-                        motif_mask=mask)
-    log.info("SEED PLACED — event #0", extra={"cell": [x, y], "length": int(len(seq))})

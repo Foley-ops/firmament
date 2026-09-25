@@ -232,3 +232,19 @@ seeding plan is mechanically impossible (overrides apply only at world creation)
 Per the guide's M1 protocol (monomer supply = initial concentrations ⇒ new run),
 **M1 attempt #1 is a fresh world** — identical physics/terrain, enriched initial
 monomer/energy pool — with M0 preserved untouched as the certified dead baseline.
+
+## Genesis v0.2 repair (2026-09-25, CPU-only — GPU reserved for the Operator's research)
+
+**Tests that prove it** (all fail when the v0.1 bug is re-introduced — mutation-checked):
+- `test_phase5_polymers.py::test_starved_copy_makes_no_progress_and_no_errors`
+- `test_phase5_polymers.py::test_sub_min_length_templates_never_yield_polymers[0,1]`
+- `test_phase5_polymers.py::test_mutation_rate_measured_from_sequences` (from sequences, not the kernel's counter)
+- `test_phase6_instruments.py::test_copier_template_pairs_are_not_interactions`, `test_ordinary_copying_never_fires_interaction_candidates` (real sim), `test_fixation_requires_a_sweep_from_minority`, `test_state_roundtrip_prevents_refire`
+- `test_causal_history.py` — seed + EDIT replay from the log alone; resume replays events logged after the snapshot; analysis cannot change a stochastic event; fork history cut at the fork point; config hash covers rule contents; developer mode cannot be enabled over the network; only transient faults auto-restart; CLI resume is indistinguishable from an uninterrupted run (logs, metrics, state)
+- `test_phase10_ops.py::test_chemistry_law_does_not_depend_on_whether_life_exists`
+
+**Found while doing it:** one new regression test was tautological (it imported the
+constant under test); mutation-checking exposed it and it was fixed.
+
+**Pending GPU (Operator OK required):** GPU halves of the replay test, viewer-throughput
+test, then fresh M0 and a four-condition M1 (baseline/enriched × unseeded/seeded).
