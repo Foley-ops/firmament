@@ -23,11 +23,14 @@ SALT_TRANSPORT = 9
 H_MIN = 1e-4          # m; below this a cell is "dry"
 MANNING_N = 0.04      # Manning roughness (natural channels); drag = g n^2 |u| / h^(4/3)
 K_EVAP = 3e-6         # kg/m^2/s per kg/m^2 humidity deficit (ocean ~5 mm/day)
-RAIN_FRAC = 0.1       # fraction of supersaturation raining out per tick
-DIFF_FRAC = 0.01      # per-face species exchange per tick in connected water
+# Rates are PER SECOND (v0.2): dt is a numerical choice, never a change of law. Values
+# equal the v0.1 per-tick constants divided by the 60 s tick they were calibrated at.
+RAIN_RATE = 0.1 / 60        # 1/s, fraction of supersaturation raining out
+DIFF_COEF = 0.01 / 60       # m^2/s, dissolved-species exchange between wet cells (dx = 1 m)
+REDISSOLVE_RATE = 0.01 / 60  # 1/s, fraction of the unsaturated deficit redissolving
+VAPOR_MIX_RATE = 0.12 / 60  # 1/s, boundary-layer relaxation toward the patch mean
 ERO_RATE = 1e-6       # sediment m per (m/s)^3 per s
 SAT_CAP = 500_000_000  # counts/cell solubility limit; excess precipitates (evaporites)
-REDISSOLVE = 0.01     # fraction of the unsaturated deficit redissolving per tick
 
 
 @wp.func
@@ -151,7 +154,7 @@ def k_height(hw: wp.array2d(dtype=wp.float64), h_new: wp.array2d(dtype=wp.float6
 
 @wp.kernel
 def k_evap_rain(hw: wp.array2d(dtype=wp.float64), vapor: wp.array2d(dtype=wp.float64),
-                temp: wp.array3d(dtype=wp.float64), dt: wp.float64):
+                temp: wp.array3d(dtype=wp.float64), dt: wp.float64, rain_frac: wp.float64):
     """Phase change with EXACT energy books: every kg of vapor carries the fixed
     enthalpy LV + CW_SP*T_REF; the sensible deviation stays in the source layer.
     (The surface layer's capacity changes with depth, so the departing/arriving
@@ -180,7 +183,7 @@ def k_evap_rain(hw: wp.array2d(dtype=wp.float64), vapor: wp.array2d(dtype=wp.flo
     # rain where the air column is supersaturated
     ex = vapor[i, j] - qsat(t0)
     if ex > wp.float64(0.0):
-        rain = ex * wp.float64(RAIN_FRAC)
+        rain = ex * rain_frac
         vapor[i, j] = vapor[i, j] - rain
         dn = d + rain / wp.float64(pc.RHO_W)
         # water lands with sensible CW_SP*T_REF; latent heat releases into the air
@@ -326,7 +329,7 @@ def k_species_advect(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dtyp
 @wp.func
 def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: int,
              hw: wp.array2d(dtype=wp.float64), seed: wp.int32,
-             H: int, W: int, ns: int) -> int:
+             H: int, W: int, ns: int, diff_frac: wp.float64) -> int:
     """Availability-capped diffusion OUTFLOW of species s from (ci,cj) through
     `face` (0=right,1=left,2=down,3=up). Sequential cap over the cell's faces in
     fixed order, so total outflow never exceeds the cell's count; recomputable
@@ -354,7 +357,7 @@ def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: i
         if d <= 0:
             continue
         st = wp.rand_init(seed, wp.int32(((ci * W + cj) * 4 + k) * ns + s))
-        amt = stoch_round(wp.float64(d) * wp.float64(DIFF_FRAC), st)
+        amt = stoch_round(wp.float64(d) * diff_frac, st)
         if amt > n - taken:
             amt = n - taken
         if k == face:
@@ -366,27 +369,27 @@ def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: i
 @wp.kernel
 def k_species_diffuse(spec: wp.array3d(dtype=wp.int32), spec_new: wp.array3d(dtype=wp.int32),
                       hw: wp.array2d(dtype=wp.float64), seed: wp.int32,
-                      H: int, W: int, ns: int):
+                      H: int, W: int, ns: int, diff_frac: wp.float64):
     s, i, j = wp.tid()
     n = spec[s, i, j]
     out = int(0)
     for k in range(4):
-        out += diff_out(spec, s, i, j, k, hw, seed, H, W, ns)
+        out += diff_out(spec, s, i, j, k, hw, seed, H, W, ns, diff_frac)
     inn = int(0)
     if j + 1 < W:
-        inn += diff_out(spec, s, i, j + 1, 1, hw, seed, H, W, ns)
+        inn += diff_out(spec, s, i, j + 1, 1, hw, seed, H, W, ns, diff_frac)
     if j - 1 >= 0:
-        inn += diff_out(spec, s, i, j - 1, 0, hw, seed, H, W, ns)
+        inn += diff_out(spec, s, i, j - 1, 0, hw, seed, H, W, ns, diff_frac)
     if i + 1 < H:
-        inn += diff_out(spec, s, i + 1, j, 3, hw, seed, H, W, ns)
+        inn += diff_out(spec, s, i + 1, j, 3, hw, seed, H, W, ns, diff_frac)
     if i - 1 >= 0:
-        inn += diff_out(spec, s, i - 1, j, 2, hw, seed, H, W, ns)
+        inn += diff_out(spec, s, i - 1, j, 2, hw, seed, H, W, ns, diff_frac)
     spec_new[s, i, j] = n - out + inn
 
 
 @wp.kernel
 def k_precipitate(spec: wp.array3d(dtype=wp.int32), precip: wp.array3d(dtype=wp.int64),
-                  hw: wp.array2d(dtype=wp.float64)):
+                  hw: wp.array2d(dtype=wp.float64), redis: wp.float64):
     """Solubility: dissolved counts above SAT_CAP precipitate to an immobile store
     (int64 — the evaporite bed grows without bound over geological time);
     redissolution when under-saturated and wet. Deterministic integer moves."""
@@ -398,7 +401,7 @@ def k_precipitate(spec: wp.array3d(dtype=wp.int32), precip: wp.array3d(dtype=wp.
         precip[s, i, j] = precip[s, i, j] + wp.int64(ex)
     elif precip[s, i, j] > wp.int64(0) and hw[i, j] > wp.float64(H_MIN):
         room = SAT_CAP - n
-        back = wp.int64(wp.float64(room) * wp.float64(REDISSOLVE))
+        back = wp.int64(wp.float64(room) * redis)
         if back > precip[s, i, j]:
             back = precip[s, i, j]
         if back > wp.int64(0):
@@ -424,9 +427,27 @@ class Fluid:
         self.key = mix(cfg.run.seed, SALT_TRANSPORT)
         self.b = None
         self.last_nsub = 0
+        dt = cfg.run.dt_seconds
+        dx2 = cfg.world.cell_meters ** 2
+        self.rain_frac = RAIN_RATE * dt
+        self.diff_frac = DIFF_COEF * dt / dx2
+        self.redis_frac = REDISSOLVE_RATE * dt
+        self.mix_alpha = VAPOR_MIX_RATE * dt
+
         self.graphs = {}
 
+    def check_stability(self) -> None:
+        """Called when the water physics first runs (not at construction: a world whose
+        schedule omits fluid may use any dt)."""
+        dt = self.cfg.run.dt_seconds
+        for name, v, lim in (("rain", self.rain_frac, 1.0), ("diffusion", self.diff_frac, 0.2),
+                             ("redissolution", self.redis_frac, 1.0), ("vapor mixing", self.mix_alpha, 1.0)):
+            if v > lim:
+                raise ValueError(f"dt_seconds={dt} makes the per-tick {name} fraction {v:.3f} "
+                                 f"exceed its stability limit {lim}; use a smaller dt")
+
     def _bind(self, s):
+        self.check_stability()
         h, w = s.shape
         f64 = wp.float64
         dev = s.device
@@ -456,7 +477,7 @@ class Fluid:
         wp.launch(k_wind, dim=s.shape, inputs=[s.wind_u, s.wind_v, wp.float32((tick * dt) % day_s),
                   wp.float32(day_s), h], device=s.device)
         wp.launch(k_evap_rain, dim=s.shape, inputs=[s.water_depth, s.vapor, s.temp,
-                  wp.float64(dt)], device=s.device)
+                  wp.float64(dt), wp.float64(self.rain_frac)], device=s.device)
 
         # CFL substep count from current max signal speed (deterministic row reduction)
         wp.launch(k_row_max_speed, dim=h, inputs=[s.water_depth, s.water_u, s.water_v, b["row"], w],
@@ -517,7 +538,7 @@ class Fluid:
         wp.launch(k_row_sum, dim=h, inputs=[s.vapor, b["row"], w], device=s.device)
         total = float(np.sum(b["row"].numpy()))
         wp.copy(b["mean"], wp.array(np.array([total]), dtype=wp.float64, device=s.device))
-        wp.launch(k_vapor_mix, dim=s.shape, inputs=[s.vapor, b["mean"], wp.float64(0.12),
+        wp.launch(k_vapor_mix, dim=s.shape, inputs=[s.vapor, b["mean"], wp.float64(self.mix_alpha),
                   wp.float64(h * w)], device=s.device)
 
         # copy-back, not swap: the substep CUDA graph holds fixed array pointers, so
@@ -535,8 +556,9 @@ class Fluid:
                   h, w, ns], device=s.device)
         s.species, b["spec_new"] = b["spec_new"], s.species
         wp.launch(k_species_diffuse, dim=(ns, h, w), inputs=[s.species, b["spec_new"], s.water_depth,
-                  wp.int32(seed32(self.key, tick, 1)), h, w, ns],
+                  wp.int32(seed32(self.key, tick, 1)), h, w, ns, wp.float64(self.diff_frac)],
                   device=s.device)
         s.species, b["spec_new"] = b["spec_new"], s.species
-        wp.launch(k_precipitate, dim=(ns, h, w), inputs=[s.species, s.precipitate, s.water_depth],
+        wp.launch(k_precipitate, dim=(ns, h, w), inputs=[s.species, s.precipitate, s.water_depth,
+                  wp.float64(self.redis_frac)],
                   device=s.device)

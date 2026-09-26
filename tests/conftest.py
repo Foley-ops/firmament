@@ -25,11 +25,11 @@ def tiny_cfg(n: int = 32, water: float = 0.4, seed: int = 20260910, cap: int = 2
                   "rotation_period_hours": 24, "year_length_days": 365,
                   "axial_tilt_deg": 23.5, "solar_constant_wm2": solar,
                   "geothermal_flux_wm2": geo, "initial_water_fraction": water},
-        "chemistry": {"file": str(REPO / "configs/chemistry_v0.yaml"), "integer_counts": True},
+        "chemistry": {"file": str(REPO / "configs/chemistry_v0_2.yaml"), "integer_counts": True},
         "polymers": {"capacity": cap, "max_length": 256,
                      "alphabet": ["M1", "M2", "M3", "M4"],
                      "mutation_rate_per_monomer": 0.005, "hydrolysis_base_rate": 1e-7,
-                     "copy_energy_per_monomer": 1,
+                     "copy_energy_per_monomer": 2,
                      "genetic_code": str(REPO / "configs/genetic_code_v0.yaml")},
         "logging": {"level": log_level, "dir": None},
     })

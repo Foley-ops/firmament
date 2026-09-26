@@ -13,6 +13,9 @@ bridge** (preferred `--port`, else a free port, recorded in `meta.json`) — on
 **localhost only** unless started with `--lan`. Developer edits exist only when the
 sim is started with `--developer`; the network can never switch them on.
 
+Only one process may write a run at a time (`runs/<id>/.lease`); a second writer is
+refused while the first is alive. `dt_seconds` must be a multiple of 60.
+
 ## Stop
 Ctrl-C (or kill). A shutdown snapshot is written on clean exit; an unclean kill loses
 at most `snapshot_every_sim_days` of progress (resume from the last snapshot).

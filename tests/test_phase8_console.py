@@ -76,7 +76,7 @@ class TestAddSpecies:
         from firmament.operator.console import _add_species
         cfg = tiny_cfg(n=8, cap=100)
         state, sched = build_test_sim(cfg, device, tmp_path / "r")
-        doc = yaml.safe_load(open(REPO / "configs/chemistry_v0.yaml"))
+        doc = yaml.safe_load(open(REPO / "configs/chemistry_v0_2.yaml"))
         doc["reactions"][0]["k300"] = 99.0            # existing rate changed
         with pytest.raises(ValueError, match="refused"):
             _add_species(sched, {"file": self._write(tmp_path, doc)})
@@ -85,7 +85,7 @@ class TestAddSpecies:
         from firmament.operator.console import _add_species
         cfg = tiny_cfg(n=8, cap=100)
         state, sched = build_test_sim(cfg, device, tmp_path / "r")
-        doc = yaml.safe_load(open(REPO / "configs/chemistry_v0.yaml"))
+        doc = yaml.safe_load(open(REPO / "configs/chemistry_v0_2.yaml"))
         sp = doc["species"]
         keys = list(sp)
         keys[0], keys[1] = keys[1], keys[0]
@@ -98,7 +98,7 @@ class TestAddSpecies:
         from firmament.operator.console import _add_species
         cfg = tiny_cfg(n=8, cap=100)
         state, sched = build_test_sim(cfg, device, tmp_path / "r")
-        doc = copy.deepcopy(yaml.safe_load(open(REPO / "configs/chemistry_v0.yaml")))
+        doc = copy.deepcopy(yaml.safe_load(open(REPO / "configs/chemistry_v0_2.yaml")))
         doc["species"]["XE"] = {"formula": {"S": 2}, "init_wet": 0, "init_dry": 0}
         doc["reactions"].append({"name": "xe_form", "sub": {"S": 2}, "prod": {"XE": 1},
                                  "dh": -1, "ea": 50000, "k300": 1e-9})

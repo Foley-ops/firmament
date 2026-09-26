@@ -248,3 +248,24 @@ constant under test); mutation-checking exposed it and it was fixed.
 
 **Pending GPU (Operator OK required):** GPU halves of the replay test, viewer-throughput
 test, then fresh M0 and a four-condition M1 (baseline/enriched × unseeded/seeded).
+
+## Thermodynamics, units, strict config, run lease (2026-09-25, CPU-only)
+
+**Tests that prove it** (mechanism tests mutation-checked: each fails with its mechanism removed):
+- `test_rules_v02.py::test_no_energy_carrier_made_in_the_dark` — v0.1's dark P~P free lunch is gone
+- `test_rules_v02.py::test_copying_needs_real_free_energy[...]` — same P~P, swamped in Pi → copying stalls
+- `test_rules_v02.py::test_loader_rejects_an_ungated_route_to_the_energy_carrier`
+- `test_rules_v02.py::test_copy_step_stoichiometry_is_exact_with_two_carriers`
+- `test_rules_v02.py::test_chemistry_extent_is_independent_of_dt`, `test_copy_speed_is_independent_of_dt`
+- `test_rules_v02.py::test_config_rejects_bad_values[...]` (7 cases), unknown override species, unknown rule-file keys, fluid stability limit, shipped configs validate
+- `test_rules_v02.py::test_single_writer_lease`, `test_cli_refuses_to_write_a_run_another_process_holds`
+
+**Found while doing it:**
+- With 2 P~P per monomer the copy step lost one H2O per incorporation — the element audit
+  in the smoke test caught it (stoichiometry fixed: M + 2 P~P + H2O → unit + 4 Pi).
+- `test_developer_mode_cannot_be_enabled_over_the_network` had been passing by coincidence:
+  it read a cell after a full physics tick, and v0.1's dark P~P production happened to
+  refill exactly what water flow carried away. Confirmed on the previous commit; the test
+  now checks the edit with physics switched off.
+
+Full suite: **103 passed on CPU** (19 min). GPU untouched. M1 plan: docs/M1_PLAN.md.

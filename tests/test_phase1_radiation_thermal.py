@@ -78,7 +78,7 @@ def test_energy_balance_one_year_dry(tmp_path, device):
     from firmament.core.chemistry import Chemistry
 
     cfg, state, sched = _dry_sim(tmp_path, device, n=48, dt=600.0)
-    chem = Chemistry.load(str(REPO / "configs/chemistry_v0.yaml"))
+    chem = Chemistry.load(str(REPO / "configs/chemistry_v0_2.yaml"))
     aud = Audit(cfg, chem, tmp_path)
     ticks = int(365 * 86400 / cfg.run.dt_seconds)
     stored0 = aud.energy_stored(state)
@@ -108,7 +108,7 @@ def test_energy_audit_detects_unledgered_heat(tmp_path, device):
     from firmament.core.chemistry import Chemistry
 
     cfg, state, sched = _dry_sim(tmp_path, device, n=48, dt=600.0)
-    chem = Chemistry.load(str(REPO / "configs/chemistry_v0.yaml"))
+    chem = Chemistry.load(str(REPO / "configs/chemistry_v0_2.yaml"))
     aud = Audit(cfg, chem, tmp_path)
     ticks = int(30 * 86400 / cfg.run.dt_seconds)          # one sim-month
     stored0 = aud.energy_stored(state)

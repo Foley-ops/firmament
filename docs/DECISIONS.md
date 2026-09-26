@@ -58,9 +58,31 @@ migrated.
 - **Server.** Binds localhost unless `--lan`; developer edits only with `--developer`.
 - **Auto-restart** retries only device faults; deterministic crashes stop for a human.
 
-**Open (Operator decision):** the energy economy. At ambient temperature the P~P
-pool sits near a thermal equilibrium, and copying spends any P~P regardless of its
-chemical potential, so work can be drawn from a single-temperature heat bath. Options:
-(a) thermodynamic — couple copy steps to ΔG of P~P hydrolysis at local concentrations;
-(b) phenomenological — keep kinetics, narrow claims to ledger conservation, and lower
-phosphate to realistic levels so vents/light dominate. Not changed in v0.2.
+**Energy economy — Operator chose (a) thermodynamic, 2026-09-25** (chemistry_v0_2.yaml):
+- One count = 1 µmol in the cell's 1 m² water column → molar concentrations per cell.
+- Reactions may declare `dg0` (kJ/mol at 300 K; van't Hoff via `dh`). Their forward flux
+  is multiplied by 1 − exp(ΔG/RT) with ΔG from local concentrations (solvent H2O at
+  activity 1), and is zero when uphill. Photochemistry is exempt (photon free energy).
+- Loader rule: any non-photochemical reaction that makes the energy carrier (P~P) must
+  declare `dg0` — no ungated route to energy can be added by accident.
+- P~P: ΔG°' hydrolysis −19 kJ/mol (pyrophosphate). Thermal condensation of P~P in the
+  dark is therefore essentially nil; light (photophosphorylation) is the energy source.
+- Copy step: M(aq) → chain unit + H2O has ΔG° +21 kJ/mol (phosphodiester bond) − RT ln[M];
+  it is paid by hydrolysing `copy_energy_per_monomer` P~P at local [P~P], [Pi], and
+  happens only if the total is downhill. Default cost is now **2 P~P per monomer**, as in
+  biology (NTP → NMP + PPi, PPi → 2 Pi); with 1, copying at µM monomer is uphill.
+- Limits (honest): other reactions remain kinetic-only (phenomenological); ΔG° values
+  are textbook approximations, not fitted.
+
+## 2026-09-25 — Time/space units, strict config, run lease
+- **dt is a numerical choice.** Chemistry k300 values are per 60 s (`k300_dt_seconds`) and
+  scale by dt/60; fluid rain/diffusion/redissolution/vapor-mixing are per-second rates
+  (validated against stability limits); polymers run dt/60 sub-steps per tick. So
+  `dt_seconds` must be a whole multiple of 60. Tests show chemistry extent and copy
+  speed are the same at dt = 60 and 120.
+- **cell_meters must be 1.0.** Fluxes, lateral conduction and transport are calibrated for
+  1 m cells; any other value is rejected loudly instead of silently changing physics.
+- **Strict config:** unknown fields, out-of-range values, vents off-grid, unknown override
+  species/keys, unknown rule-file keys → errors.
+- **Single-writer lease:** `runs/<id>/.lease` (pid). A live holder blocks other writers;
+  a dead holder's lease is reclaimed and logged; the same pid (auto-restart) re-enters.

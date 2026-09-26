@@ -13,7 +13,7 @@ from tests.conftest import REPO, build_test_sim, tiny_cfg
 
 
 def _load_doc():
-    with open(REPO / "configs/chemistry_v0.yaml") as f:
+    with open(REPO / "configs/chemistry_v0_2.yaml") as f:
         return yaml.safe_load(f)
 
 
@@ -53,7 +53,7 @@ def test_closed_box_atoms_exact_and_equilibrating(tmp_path, device):
     from firmament.core.chemistry import Chemistry
 
     cfg, state, sched = _sim(tmp_path, device, keep=("chem",), solar=0.0, geo=0.0, vents=[])
-    chem = Chemistry.load(str(REPO / "configs/chemistry_v0.yaml"))
+    chem = Chemistry.load(str(REPO / "configs/chemistry_v0_2.yaml"))
     aud = Audit(cfg, chem, tmp_path)
     el0 = aud.element_totals(state)
     v_prev = state.species.numpy().astype(np.int64).sum(axis=(1, 2))

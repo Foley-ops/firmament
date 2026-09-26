@@ -1,5 +1,5 @@
 run:
-  name: "genesis"
+  name: "m1-enriched"
   seed: 20260910
   dt_seconds: 60
   snapshot_every_sim_days: 30

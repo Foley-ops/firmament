@@ -48,6 +48,7 @@ def build_sim(cfg: Config, run_dir: Path, device: str):
 def cmd_run(args):
     cfg = Config.load(args.config)
     run_dir = rundir.create(cfg)
+    rundir.acquire_lease(run_dir)
     CLOCK.run_id = run_dir.name
     log = setup(cfg.logging.dir or run_dir / "logs", cfg.logging.level)
     log.info("run created", extra={"config": str(args.config), "device": args.device})
@@ -111,6 +112,7 @@ def _load_from_snapshot(args, run_dir: Path, snap=None):
     is queued for replay at its original ticks."""
     from firmament.io import events as ev
     from firmament.io.snapshot import SnapshotManager
+    rundir.acquire_lease(run_dir)                 # every writer goes through here
     cfg = Config.load(run_dir / "config.yaml")
     CLOCK.run_id = run_dir.name
     setup(run_dir / "logs", cfg.logging.level)

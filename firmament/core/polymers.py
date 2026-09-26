@@ -30,6 +30,8 @@ EFF = {"replicase": 0, "catalyst": 1, "binder": 2, "membrane": 3, "photoactive":
        "motor": 5, "emit": 6, "sense": 7}
 KH_EA = 80000.0      # J/mol — hydrolysis is strongly temperature-dependent (hot water kills)
 MEM_THRESH = 200     # L units to close a compartment
+POLYMER_STEP_SECONDS = 60.0   # copy/hydrolysis/effect/membrane rates are per 60 s step
+POLY_DIFFUSION_RATE = 0.01 / 60  # 1/s per face, polymer diffusion through water
 MIN_LEN = 2          # v0.2: a polymer needs >= 2 units (one bond); shorter fragments dissolve
 R_GAS = 8.314
 
@@ -99,6 +101,8 @@ def k_cell_pass(
     ev_n: wp.array(dtype=wp.int32), ev_child: wp.array(dtype=wp.int64),
     ev_parent: wp.array(dtype=wp.int64), ev_cell: wp.array(dtype=wp.int32),
     ev_len: wp.array(dtype=wp.int32), ev_mut: wp.array(dtype=wp.int32),
+    # thermodynamics of a copy step (chemistry thermo.polymer)
+    count_mol: wp.float64, dg_cond0: wp.float64, dg_hyd0: wp.float64, dh_hyd: wp.float64,
 ):
     c = wp.tid()
     H = (cell_start.shape[0] - 1) / W
@@ -273,7 +277,26 @@ def k_cell_pass(
                     # draw at all. (v0.1 rolled a free deletion every starved tick and
                     # drove every lineage to length 0 — docs/M1_ATTEMPTS.md.)
                     want = complement(int(p_seq[tmpl, tl - 1 - pos]))
-                    if spec[IM1 + want - 1, i, j] > 0 and spec[IPP, i, j] >= e_copy:
+                    # v0.2 thermodynamics: condensing one monomer (uphill) is paid for by
+                    # hydrolysing e_copy P~P at the cell's ACTUAL concentrations; the step
+                    # happens only if the sum is downhill. Near P~P/Pi equilibrium, or at
+                    # very dilute monomer, copying stops — no work from a single heat bath.
+                    downhill = int(0)
+                    # M + e P~P + (e-1) H2O -> unit + 2e Pi  (condensation releases one H2O,
+                    # each further P~P hydrolysis consumes one)
+                    if (spec[IM1 + want - 1, i, j] > 0 and spec[IPP, i, j] >= e_copy
+                            and spec[IH2O, i, j] >= e_copy - 1):
+                        conc = count_mol / (wp.max(water[i, j], wp.float64(1.0e-3)) * wp.float64(1000.0))
+                        rt = wp.float64(8.314e-3) * t1
+                        dgh = dh_hyd + (dg_hyd0 - dh_hyd) * t1 / wp.float64(300.0)
+                        cpi = wp.max(wp.float64(spec[IPI, i, j]), wp.float64(0.5)) * conc
+                        cpp = wp.float64(spec[IPP, i, j]) * conc
+                        cm = wp.float64(spec[IM1 + want - 1, i, j]) * conc
+                        dg_step = dg_cond0 - rt * wp.log(cm) + wp.float64(e_copy) * (
+                            dgh + rt * wp.log(cpi * cpi / cpp))
+                        if dg_step < wp.float64(0.0):
+                            downhill = 1
+                    if downhill == 1:
                         r = wp.float64(wp.randf(st))
                         er = wp.float64(mut_rate)
                         typ = want
@@ -297,6 +320,7 @@ def k_cell_pass(
                                 spec[im, i, j] -= 1
                                 spec[IPP, i, j] -= e_copy
                                 spec[IPI, i, j] += 2 * e_copy
+                                spec[IH2O, i, j] -= e_copy - 1
                                 heat += wp.float64(0.02)
                                 p_seq[child, clen] = wp.uint8(typ)
                                 p_len[child] = clen + 1
@@ -486,7 +510,8 @@ def k_membrane(store_old: wp.array2d(dtype=wp.int32), store_new: wp.array2d(dtyp
 def k_transport(p_state: wp.array(dtype=wp.uint8), p_cell: wp.array(dtype=wp.int32),
                 p_motor: wp.array(dtype=wp.int32), comp_id: wp.array2d(dtype=wp.int32),
                 fx: wp.array2d(dtype=wp.float64), fy: wp.array2d(dtype=wp.float64),
-                h0: wp.array2d(dtype=wp.float64), seed: wp.int32, H: int, W: int):
+                h0: wp.array2d(dtype=wp.float64), seed: wp.int32, H: int, W: int,
+                diff_frac: wp.float64):
     p = wp.tid()
     if int(p_state[p]) != P_FREE:
         p_motor[p] = -1
@@ -519,7 +544,7 @@ def k_transport(p_state: wp.array(dtype=wp.uint8), p_cell: wp.array(dtype=wp.int
             elif k == 3 and i - 1 >= 0:
                 f = -fy[i - 1, j]
                 ni = i - 1
-            frac = wp.float64(0.01)                     # diffusion floor
+            frac = diff_frac                            # diffusion floor
             if f > wp.float64(0.0) and hh > wp.float64(1e-4):
                 frac += wp.min(f / hh, wp.float64(0.45))
             acc += frac
@@ -550,6 +575,14 @@ class Polymers:
         self.recent_events = []
         with open(cfg.polymers.genetic_code) as f:
             self.code = yaml.safe_load(f)
+        allowed = {"seq", "effect", "target", "strength", "cost_pp"}
+        for n, md in self.code["motifs"].items():
+            if set(md) - allowed:
+                raise ValueError(f"motif {n} has unknown keys {sorted(set(md) - allowed)}")
+            if md["effect"] not in EFF:
+                raise ValueError(f"motif {n} has unknown effect {md['effect']}")
+            if len(md["seq"]) != int(self.code["k"]):
+                raise ValueError(f"motif {n} length != k")
         self.mk = int(self.code["k"])
         names = list(self.code["motifs"].keys())
         self.motif_names = names
@@ -617,9 +650,27 @@ class Polymers:
         self.g_ev_len = wp.zeros(EV_CAP, dtype=wp.int32, device=dev)
         self.g_ev_mut = wp.zeros(EV_CAP, dtype=wp.int32, device=dev)
         self.fluid = None   # wired by cli (fx/fy/h0 buffers)
+        tp = self.chem.thermo.get("polymer")
+        if not tp:
+            raise ValueError("chemistry file lacks thermo.polymer (copy-step thermodynamics)")
+        self.thermo = {"count_mol": float(self.chem.thermo["count_mol"]), **tp}
         self.idx = self.chem.index
 
     def step(self, s, tick: int) -> None:
+        """One tick = dt/60 polymer sub-steps (copy/hydrolysis/effects/membranes are
+        calibrated per 60 s — POLYMER_STEP_SECONDS), then one transport pass driven by
+        the tick's physical water fluxes. dt is thus a numerical choice, not a law."""
+        n_sub = int(round(self.cfg.run.dt_seconds / POLYMER_STEP_SECONDS))
+        events = []
+        for k in range(n_sub):
+            if not self._substep(s, tick, tick * n_sub + k, events):
+                break
+        self._transport(s, tick)
+        self.recent_events = events
+        if events and self.lineage is not None:
+            self.lineage.add_copies(tick, events)
+
+    def _substep(self, s, tick: int, step_id: int, events: list) -> bool:
         h, w = s.shape
         ncell = h * w
         # ---- host: rebuild cell index and reservations from a device snapshot
@@ -628,7 +679,7 @@ class Polymers:
         n_live = int(alive.sum())
         s.p_count = n_live
         if n_live == 0 and int(s.membrane_store.numpy().sum()) == 0:
-            return
+            return False
         cell_np = s.p_cell.numpy()
         id_np = s.p_id.numpy()
         mot_np = s.p_motifs.numpy()
@@ -674,27 +725,37 @@ class Polymers:
             self.idx["H2O"], self.idx["PP"], self.idx["Pi"], self.idx["M1"], self.idx["L"],
             wp.float32(cfgp.hydrolysis_base_rate), wp.float32(cfgp.mutation_rate_per_monomer),
             cfgp.copy_energy_per_monomer, cfgp.max_length,
-            wp.float64(self.cfg.run.dt_seconds), wp.int64(tick),
-            wp.int32(seed32(self.key_copy, tick)), w,
+            wp.float64(POLYMER_STEP_SECONDS), wp.int64(tick),
+            wp.int32(seed32(self.key_copy, step_id)), w,
             self.g_ev_n, self.g_ev_child, self.g_ev_parent, self.g_ev_cell,
-            self.g_ev_len, self.g_ev_mut], device=dev)
+            self.g_ev_len, self.g_ev_mut,
+            wp.float64(self.thermo["count_mol"]), wp.float64(self.thermo["condensation_dg0"]),
+            wp.float64(self.thermo["carrier_hydrolysis_dg0"]),
+            wp.float64(self.thermo["carrier_hydrolysis_dh"])], device=dev)
         s.next_poly_id += total_res
 
         # ---- membranes / compartments (two-pass, pull-based split)
         wp.launch(k_snapshot_plane, dim=s.shape, inputs=[s.species, self.idx["L"], self.g_l_pre], device=dev)
         wp.launch(k_membrane, dim=s.shape, inputs=[s.membrane_store, self.g_store_new,
                   s.compartment_id, s.species, self.g_l_pre, self.idx["L"],
-                  wp.int32(seed32(self.key_copy, tick, 1)), h, w], device=dev)
+                  wp.int32(seed32(self.key_copy, step_id, 1)), h, w], device=dev)
         s.membrane_store, self.g_store_new = self.g_store_new, s.membrane_store
+        self._collect_events(events)
+        return True
 
-        # ---- transport (water drift + diffusion + staged motor moves)
-        if self.fluid is not None and self.fluid.b is not None:
+    def _transport(self, s, tick: int) -> None:
+        """Water drift + diffusion + staged motor moves, once per tick."""
+        h, w = s.shape
+        dev = s.device
+        if self.fluid is not None and self.fluid.b is not None and s.p_count > 0:
             fb = self.fluid.b
             wp.launch(k_transport, dim=s.p_cap, inputs=[s.p_state, s.p_cell, s.p_motor,
                       s.compartment_id, fb["fx"], fb["fy"], fb["h0"],
-                      wp.int32(seed32(self.key_move, tick)), h, w], device=dev)
+                      wp.int32(seed32(self.key_move, tick)), h, w,
+                      wp.float64(POLY_DIFFUSION_RATE * self.cfg.run.dt_seconds)], device=dev)
 
-        # ---- lineage events out (sorted by child id -> deterministic DB)
+    def _collect_events(self, events: list) -> None:
+        """Lineage events of one sub-step, sorted by child id -> deterministic DB."""
         nev = int(self.g_ev_n.numpy()[0])
         if nev > 0:
             if nev > EV_CAP:
@@ -706,8 +767,4 @@ class Polymers:
                            self.g_ev_cell.numpy()[:nev][srt].tolist(),
                            self.g_ev_len.numpy()[:nev][srt].tolist(),
                            self.g_ev_mut.numpy()[:nev][srt].tolist()))
-            self.recent_events = evs
-            if self.lineage is not None:
-                self.lineage.add_copies(tick, evs)
-        else:
-            self.recent_events = []
+            events.extend(evs)

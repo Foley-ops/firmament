@@ -28,9 +28,14 @@ def k_chemistry(spec: wp.array3d(dtype=wp.int32), temp: wp.array3d(dtype=wp.floa
                 k300: wp.array(dtype=wp.float32), ea: wp.array(dtype=wp.float32),
                 dh: wp.array(dtype=wp.float32), photo: wp.array(dtype=wp.int32),
                 catz: wp.array(dtype=wp.int32), n_react: int, norm: wp.float64,
-                seed: wp.int32, W: int, dt_scale: wp.float64):
+                seed: wp.int32, W: int, dt_scale: wp.float64,
+                has_dg: wp.array(dtype=wp.int32), dg0: wp.array(dtype=wp.float32),
+                isolv: int, count_mol: wp.float64):
     i, j = wp.tid()
     t1 = temp[1, i, j]
+    # molar concentration per count in this cell's water column (1 m^2 cell)
+    conc = count_mol / (wp.max(water[i, j], wp.float64(1.0e-3)) * wp.float64(1000.0))
+    rt = wp.float64(R_GAS) * wp.float64(1.0e-3) * t1          # kJ/mol
     heat = wp.float64(0.0)
     for r in range(n_react):
         kk = wp.float64(k300[r]) * wp.exp(-wp.float64(ea[r]) / wp.float64(R_GAS)
@@ -42,6 +47,28 @@ def k_chemistry(spec: wp.array3d(dtype=wp.int32), temp: wp.array3d(dtype=wp.floa
             kk = kk * lf
         if catz[r] != 0:
             kk = kk * (wp.float64(1.0) + wp.float64(cat[r, i, j]))
+        if has_dg[r] != 0:
+            # thermodynamic gate: net forward flux scales with (1 - Q/K) = 1 - exp(dG/RT)
+            dgt = wp.float64(dh[r]) + (wp.float64(dg0[r]) - wp.float64(dh[r])) * t1 / wp.float64(300.0)
+            lnq = wp.float64(0.0)
+            for q in range(MAX_SUB):
+                sp = prod_s[r, q]
+                if sp < 0:
+                    break
+                if sp != isolv:
+                    lnq += wp.float64(prod_c[r, q]) * wp.log(
+                        wp.max(wp.float64(spec[sp, i, j]), wp.float64(0.5)) * conc)
+            for q in range(MAX_SUB):
+                sp = sub_s[r, q]
+                if sp < 0:
+                    break
+                if sp != isolv:
+                    lnq -= wp.float64(sub_c[r, q]) * wp.log(
+                        wp.max(wp.float64(spec[sp, i, j]), wp.float64(0.5)) * conc)
+            dgr = dgt + rt * lnq
+            if dgr >= wp.float64(0.0):
+                continue
+            kk = kk * (wp.float64(1.0) - wp.exp(dgr / rt))
         if kk <= wp.float64(0.0):
             continue
         prop = kk * dt_scale
@@ -102,6 +129,7 @@ class Chemistry:
         self.reactions = doc["reactions"]
         self.n_react = len(self.reactions)
         self.norm = float(doc.get("norm", 1e5))
+        self.thermo = doc.get("thermo", {})
         # element composition matrix (n_species x n_elements)
         self.comp = np.zeros((self.n_species, len(self.elements)), dtype=np.int64)
         for sname, sd in doc["species"].items():
@@ -115,7 +143,38 @@ class Chemistry:
         with open(path) as f:
             return cls(yaml.safe_load(f))
 
+    REACTION_KEYS = {"name", "sub", "prod", "dh", "ea", "k300", "photo", "catalyzable", "dg0"}
+    SPECIES_KEYS = {"formula", "init_wet", "init_dry"}
+    TOP_KEYS = {"norm", "elements", "species", "reactions", "k300_dt_seconds", "thermo"}
+
     def validate(self) -> None:
+        bad = set(self.doc) - self.TOP_KEYS
+        if bad:
+            raise ValueError(f"chemistry file has unknown top-level keys {sorted(bad)}")
+        for n, sd in self.doc["species"].items():
+            if set(sd) - self.SPECIES_KEYS:
+                raise ValueError(f"species {n} has unknown keys {sorted(set(sd) - self.SPECIES_KEYS)}")
+            for el in sd["formula"]:
+                if el not in self.elements:
+                    raise ValueError(f"species {n} uses undeclared element {el}")
+        for r in self.reactions:
+            if set(r) - self.REACTION_KEYS:
+                raise ValueError(f"reaction {r.get('name')} has unknown keys "
+                                 f"{sorted(set(r) - self.REACTION_KEYS)}")
+            if r["k300"] < 0 or r["ea"] < 0:
+                raise ValueError(f"reaction {r['name']} has a negative rate or activation energy")
+            for sp in list(r["sub"]) + list(r["prod"]):
+                if sp not in self.index:
+                    raise ValueError(f"reaction {r['name']} uses undeclared species {sp}")
+        carrier = self.thermo.get("energy_carrier")
+        if carrier:
+            if carrier not in self.index:
+                raise ValueError(f"thermo.energy_carrier {carrier} is not a declared species")
+            for r in self.reactions:
+                if r["prod"].get(carrier, 0) > r["sub"].get(carrier, 0) and not r.get("photo") \
+                        and "dg0" not in r:
+                    raise ValueError(f"reaction {r['name']} makes the energy carrier {carrier} "
+                                     "without light and without dg0 — an ungated free lunch")
         sources = {n: 0 for n in self.names}
         sinks = {n: 0 for n in self.names}
         for r in self.reactions:
@@ -142,6 +201,9 @@ class Chemistry:
             raise ValueError(f"species without both source and sink: {bad}")
 
     def bind(self, state, cfg) -> None:
+        unknown = set(cfg.chemistry.overrides) - set(self.names)
+        if unknown:
+            raise ValueError(f"chemistry.overrides names unknown species {sorted(unknown)}")
         self.state = state
         self.cfg = cfg
         self.key = mix(cfg.run.seed, SALT_CHEM)
@@ -163,13 +225,16 @@ class Chemistry:
         self.g_k300 = arr(np.array([r["k300"] for r in self.reactions], np.float32), wp.float32)
         self.g_ea = arr(np.array([r["ea"] for r in self.reactions], np.float32), wp.float32)
         self.g_dh = arr(np.array([r["dh"] for r in self.reactions], np.float32), wp.float32)
+        self.g_has_dg = arr(np.array([1 if "dg0" in r else 0 for r in self.reactions], np.int32), wp.int32)
+        self.g_dg0 = arr(np.array([r.get("dg0", 0.0) for r in self.reactions], np.float32), wp.float32)
         photo = np.array([1 if r.get("photo") else 0 for r in self.reactions], np.int32)
         catz = np.array([1 if r.get("catalyzable") else 0 for r in self.reactions], np.int32)
         self.g_photo = arr(photo, wp.int32)
         self.g_catz = arr(catz, wp.int32)
         state.catalyst = wp.zeros((nr, h, w), dtype=wp.float32, device=dev)
         state.e_chem = wp.zeros((h, w), dtype=wp.float64, device=dev)
-        self.dt_scale = 1.0  # k300 is already per-tick
+        # k300 values are per k300_dt_seconds; dt is a numerical choice, not a law
+        self.dt_scale = cfg.run.dt_seconds / float(self.doc.get("k300_dt_seconds", 60))
 
     def init_species(self, state) -> None:
         """Initial inventory: wet cells get solution chemistry, dry cells the atmosphere."""
@@ -196,5 +261,7 @@ class Chemistry:
             self.g_sub_s, self.g_sub_c, self.g_prod_s, self.g_prod_c,
             self.g_k300, self.g_ea, self.g_dh, self.g_photo, self.g_catz,
             self.n_react, wp.float64(self.norm),
-            wp.int32(seed32(self.key, tick)), w, wp.float64(self.dt_scale)],
+            wp.int32(seed32(self.key, tick)), w, wp.float64(self.dt_scale),
+            self.g_has_dg, self.g_dg0, self.index[self.thermo.get("solvent", "H2O")],
+            wp.float64(self.thermo.get("count_mol", 1.0e-6))],
             device=state.device)

@@ -1,5 +1,5 @@
 run:
-  name: "genesis"
+  name: "m1-baseline"
   seed: 20260910
   dt_seconds: 60
   snapshot_every_sim_days: 30
@@ -21,14 +21,6 @@ world:
 chemistry:
   file: configs/chemistry_v0_2.yaml
   integer_counts: true
-  # M1 attempt 1 environment (approved protocol: monomer supply = initial concentrations)
-  overrides:
-    M1: {init_wet: 3000}
-    M2: {init_wet: 3000}
-    M3: {init_wet: 3000}
-    M4: {init_wet: 3000}
-    PP: {init_wet: 20000}
-    Pi: {init_wet: 100000}
 
 polymers:
   capacity: 1_000_000

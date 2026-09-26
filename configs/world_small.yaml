@@ -19,7 +19,7 @@ world:
   initial_water_fraction: 0.4
 
 chemistry:
-  file: configs/chemistry_v0.yaml
+  file: configs/chemistry_v0_2.yaml
   integer_counts: true
 
 polymers:
@@ -28,7 +28,7 @@ polymers:
   alphabet: [M1, M2, M3, M4]
   mutation_rate_per_monomer: 0.005
   hydrolysis_base_rate: 1e-7
-  copy_energy_per_monomer: 1
+  copy_energy_per_monomer: 2
   genetic_code: configs/genetic_code_v0.yaml
 
 logging:

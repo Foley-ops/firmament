@@ -212,7 +212,7 @@ def test_audits_hold_with_life(tmp_path, device):
     from firmament.core.chemistry import Chemistry
 
     cfg, state, sched, _ = _life_sim(tmp_path, device, pp=50000)
-    chem = Chemistry.load(str(REPO / "configs/chemistry_v0.yaml"))
+    chem = Chemistry.load(str(REPO / "configs/chemistry_v0_2.yaml"))
     aud = Audit(cfg, chem, tmp_path)
     el0 = aud.element_totals(state)
     e0 = aud.energy_stored(state)

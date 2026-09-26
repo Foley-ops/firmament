@@ -162,6 +162,7 @@ def test_developer_mode_cannot_be_enabled_over_the_network(tmp_path, device):
 
     from firmament.server.api import make_app
     _, s, k = _fresh(tmp_path, "r", device)
+    k.modules = []            # the tick applies ONLY the causal command (no physics after it)
     (tmp_path / "r" / "meta.json").write_text(json.dumps(
         {"run_id": "r", "parent": None, "created": "x", "touched": False}))
     client = TestClient(make_app(k, tmp_path / "r"))
