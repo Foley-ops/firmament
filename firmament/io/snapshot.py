@@ -64,6 +64,16 @@ class SnapshotManager:
         tmp.rename(p)
         if old.exists():
             shutil.rmtree(old)
+        if sched is not None:
+            # derived data on disk is kept consistent with the newest snapshot, so an
+            # unclean kill loses nothing that resume cannot regenerate
+            for name in ("lineage", "metrics", "analysis"):
+                obj = getattr(sched, name, None)
+                if obj is not None:
+                    obj.flush()
+        marker = self.dir.parent / ".restart_count"
+        if marker.exists():
+            marker.unlink()                 # the run made progress: restart budget resets
         log.info("snapshot saved", extra={"path": str(p), "tick": state.tick})
         return p
 

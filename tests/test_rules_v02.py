@@ -188,16 +188,28 @@ def test_single_writer_lease(isolated_cwd):
     run = rundir.create(tiny_cfg())
     rundir.acquire_lease(run)
     rundir.acquire_lease(run)                               # same pid: re-entrant
-    other = subprocess.Popen(["sleep", "30"])
+    rundir.release_lease(run)
+    other = _hold_lease_in_subprocess(run)
     try:
-        (run / ".lease").write_text(json.dumps({"pid": other.pid}))
         with pytest.raises(rundir.LeaseError, match=str(other.pid)):
             rundir.acquire_lease(run)
     finally:
         other.kill()
         other.wait()
-    rundir.acquire_lease(run)                               # dead holder: reclaimed
-    assert json.loads((run / ".lease").read_text())["pid"] != other.pid
+    rundir.acquire_lease(run)                               # holder died: lock released
+    assert json.loads((run / ".lease").read_text())["pid"] == __import__("os").getpid()
+
+
+def _hold_lease_in_subprocess(run):
+    import sys
+    import time as _t
+    code = ("import sys, time; sys.path.insert(0, %r); from firmament.io import rundir; "
+            "rundir.acquire_lease(%r); print('held', flush=True); time.sleep(60)" % (str(REPO), str(run)))
+    p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True,
+                         env={**__import__("os").environ, "CUDA_VISIBLE_DEVICES": ""})
+    assert p.stdout.readline().strip() == "held"
+    _t.sleep(0.1)
+    return p
 
 
 def test_cli_refuses_to_write_a_run_another_process_holds(isolated_cwd, device):
@@ -207,9 +219,9 @@ def test_cli_refuses_to_write_a_run_another_process_holds(isolated_cwd, device):
     p.write_text(yaml.safe_dump(tiny_cfg(n=16, cap=200).model_dump(mode="json")))
     cli.main(["--device", device, "run", "--config", str(p), "--ticks", "2"])
     rid = rundir.list_runs()[0]["run_id"]
-    other = subprocess.Popen(["sleep", "30"])
+    rundir.release_lease(rundir.RUNS / rid)
+    other = _hold_lease_in_subprocess(rundir.RUNS / rid)
     try:
-        (rundir.RUNS / rid / ".lease").write_text(json.dumps({"pid": other.pid}))
         with pytest.raises(rundir.LeaseError):
             cli.main(["--device", device, "event", "--run", rid, "--type", "rain"])
     finally:

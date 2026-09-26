@@ -288,7 +288,13 @@ function setupConsole() {
   $("event-submit").onclick = async () => {
     const t = $("event-type").value;
     const body = {};
-    document.querySelectorAll("#event-params input").forEach((i) => (body[i.dataset.param] = +i.value));
+    let bad = null;
+    document.querySelectorAll("#event-params input").forEach((i) => {
+      const v = Number(i.value.trim());
+      if (i.value.trim() === "" || !Number.isFinite(v)) bad = i.dataset.param;
+      body[i.dataset.param] = v;
+    });
+    if (bad) { alert(`"${bad}" must be a plain number`); return; }
     const r = await (await fetch(`/api/console/${t}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
     if (r.confirm_token) {
       $("confirm-box").classList.remove("hidden");

@@ -97,53 +97,44 @@ class LeaseError(RuntimeError):
     pass
 
 
+_HELD: dict[str, int] = {}          # resolved run dir -> open fd holding its flock
+
+
 def acquire_lease(run_dir: Path) -> Path:
-    """Single-writer lease: one process may write a run directory at a time. A lease
-    whose pid is dead is reclaimed (and logged); a lease held by this same pid (e.g.
-    an auto-restart re-exec) is re-entered."""
-    import atexit
+    """Single-writer lease via an OS file lock (flock). The kernel guarantees exclusivity
+    and releases the lock the moment its holder dies — so there is no stale-lease
+    reclamation race (v0.1's check-then-create pid file let several processes win at
+    once). Re-entrant within one process; an exec'd auto-restart re-acquires cleanly
+    because Python opens files close-on-exec."""
+    import fcntl
     import os
-
-    from firmament.io.logging import get
     lease = Path(run_dir) / ".lease"
-    me = os.getpid()
-    while True:
+    key = str(lease.resolve())
+    if key in _HELD:
+        return lease
+    fd = os.open(lease, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
         try:
-            fd = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, json.dumps({"pid": me, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}).encode())
-            os.close(fd)
-            break
-        except FileExistsError:
-            try:
-                holder = json.loads(lease.read_text())["pid"]
-            except (OSError, ValueError, KeyError):
-                holder = None
-            if holder == me:
-                break
-            if holder is not None and _pid_alive(holder):
-                raise LeaseError(f"{run_dir} is being written by pid {holder}; "
-                                 "stop that process first (single-writer rule)")
-            get("rundir").warning("reclaiming stale run lease", extra={"stale_pid": holder})
-            lease.unlink(missing_ok=True)
-
-    def _release():
-        try:
-            if json.loads(lease.read_text())["pid"] == me:
-                lease.unlink()
-        except (OSError, ValueError, KeyError):
-            pass
-    atexit.register(_release)
+            holder = json.loads(os.pread(fd, 4096, 0) or b"{}").get("pid")
+        except ValueError:
+            holder = None
+        os.close(fd)
+        raise LeaseError(f"{run_dir} is being written by pid {holder}; "
+                         "stop that process first (single-writer rule)") from None
+    os.ftruncate(fd, 0)
+    os.pwrite(fd, json.dumps({"pid": os.getpid(),
+                              "since": time.strftime("%Y-%m-%dT%H:%M:%S")}).encode(), 0)
+    _HELD[key] = fd
     return lease
 
 
 def release_lease(run_dir: Path) -> None:
     import os
-    lease = Path(run_dir) / ".lease"
-    try:
-        if json.loads(lease.read_text())["pid"] == os.getpid():
-            lease.unlink()
-    except (OSError, ValueError, KeyError):
-        pass
+    fd = _HELD.pop(str((Path(run_dir) / ".lease").resolve()), None)
+    if fd is not None:
+        os.close(fd)                       # closing the fd drops the flock
 
 
 def _pid_alive(pid: int) -> bool:

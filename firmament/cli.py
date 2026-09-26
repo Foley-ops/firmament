@@ -81,26 +81,50 @@ def _attach_io(cfg, run_dir, state, sched):
     sched.instruments.append(maybe_snapshot)
 
 
+def _last_good_snapshot(run_dir: Path) -> str | None:
+    """Newest COMPLETE snapshot (tick_*.zarr only — never a .tmp/.old in progress)."""
+    last = sorted((Path(run_dir) / "snapshots").glob("tick_*.zarr"))
+    return str(last[-1]) if last else None
+
+
+def _install_stop_signals(sched) -> None:
+    """Ctrl-C (SIGINT) and SIGTERM request a GRACEFUL stop: the loop finishes the current
+    tick, then the shutdown snapshot and all buffered metrics/lineage/analysis are written.
+    A second Ctrl-C falls back to an immediate KeyboardInterrupt."""
+    import signal
+
+    def request_stop(signum, frame):
+        if sched.stop_flag and signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        sched.stop_flag = True
+        get("cli").warning("stop requested — finishing tick, then snapshot", extra={"signal": signum})
+    try:
+        signal.signal(signal.SIGINT, request_stop)
+        signal.signal(signal.SIGTERM, request_stop)
+    except ValueError:
+        pass                           # not the main thread (tests): no signal handling
+
+
 def _guarded_loop(sched, cfg, run_dir, state, ticks):
     import json
     import traceback
     log = get("cli")
+    _install_stop_signals(sched)
     try:
         sched.loop(max_ticks=ticks)
-        sched.snapshots.save(state, sched)          # shutdown snapshot
+        sched.snapshots.save(state, sched)          # shutdown snapshot (also on stop)
         _flush(sched)
     except Exception as e:  # crash record then re-raise
-        last = sorted((run_dir / "snapshots").glob("tick_*"))
         (run_dir / "crash.json").write_text(json.dumps({
             "exception": repr(e), "traceback": traceback.format_exc(),
-            "tick": state.tick, "last_good_snapshot": str(last[-1]) if last else None}))
+            "tick": state.tick, "last_good_snapshot": _last_good_snapshot(run_dir)}))
         log.error("crash", extra={"exception": repr(e), "tick": state.tick})
         raise
 
 
 def _flush(sched):
     for obj in (getattr(sched, "lineage", None), getattr(sched, "events", None),
-                getattr(sched, "metrics", None)):
+                getattr(sched, "analysis", None), getattr(sched, "metrics", None)):
         if obj:
             obj.flush()
 
@@ -186,14 +210,29 @@ def cmd_replay(args):
     run_dir = rundir.RUNS / args.run
     cfg = Config.load(run_dir / "config.yaml")
     state, sched = build_sim(cfg, run_dir, args.device)
-    SnapshotManager(run_dir / "snapshots", cfg).load(
-        state, sched, int(args.snapshot) if args.snapshot else None)
+    snaps = SnapshotManager(run_dir / "snapshots", cfg)
+    start = int(args.snapshot) if args.snapshot else max(
+        [t for t in snaps.list() if t < args.to_tick], default=None)
+    if start is None or start >= args.to_tick:
+        print(f"replay needs a snapshot strictly before tick {args.to_tick} "
+              f"(have {snaps.list()}); refusing a vacuous replay")
+        sys.exit(2)
+    snaps.load(state, sched, start)
     out = rundir.RUNS / "_replays" / f"{args.run}@{args.to_tick}"
     out.mkdir(parents=True, exist_ok=True)
     sched.events = None                      # replay applies history; it never writes it
     replay_events(sched, run_dir / "events.jsonl")
     while state.tick < args.to_tick:
         sched.tick_once()
+    if args.verify:
+        # a snapshot at tick T may already contain commands applied AT T (e.g. a seed
+        # placed offline): apply queued history due at T until causal counts match
+        import zarr as _z
+        ref_meta = _z.open_group(str(snaps.path(args.to_tick)), mode="r").attrs["meta"]
+        from firmament.operator import causal
+        q = sched.replay_queue
+        while state.causal_n < int(ref_meta.get("causal_n", 0)) and q and q[0]["tick"] == state.tick:
+            causal._apply(sched, q.pop(0), live=False)
     path = SnapshotManager(out, cfg).save(state)
     print(f"replayed to tick {state.tick} -> {path}")
     if args.verify:
@@ -224,10 +263,15 @@ def cmd_event(args):
     run_dir = rundir.RUNS / args.run
     cfg, state, sched = _load_from_snapshot(args, run_dir)
     console.request(sched, args.type, json.loads(args.params))
-    sched.tick_once()                     # events apply on the next tick boundary
+    # any logged history after the snapshot replays first; the new command commits only
+    # once history has caught up (causal order), so keep ticking until it has
+    n_before = sched.events.count
+    while sched.mailbox or sched.replay_queue or sched.events.count == n_before:
+        sched.tick_once()
     sched.snapshots.save(state, sched)
     _flush(sched)
-    print(f"{args.type} applied at tick {state.tick}")
+    rec = sched.events.read_all()[-1]
+    print(f"{rec['event']} applied at tick {rec['tick']} (causal n={rec['n']})")
 
 
 def cmd_report(args):

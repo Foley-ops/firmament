@@ -144,8 +144,12 @@ def k_cell_pass(
                 spec[IH2O, i, j] -= ln
                 p_state[p] = wp.uint8(P_DEAD)
                 tm = p_partner[p]
-                if tm >= 0 and tm != p and int(p_state[tm]) == P_BOUND and p_partner[tm] == p:
-                    p_state[tm] = wp.uint8(P_FREE)
+                if tm >= 0 and tm != p and p_partner[tm] == p:
+                    # release whoever was linked to the dying polymer: a bound template
+                    # goes FREE; a binder partner (already FREE) is unlinked (v0.1 left it
+                    # pointing at a dead, later recycled, slot forever)
+                    if int(p_state[tm]) == P_BOUND:
+                        p_state[tm] = wp.uint8(P_FREE)
                     p_partner[tm] = -1
                 p_partner[p] = -1
                 if has_child == 1:            # v0.2: also empty children (v0.1 leaked them)
@@ -175,6 +179,16 @@ def k_cell_pass(
             eff = m_eff[m]
             if eff == 0 or eff == 4 or eff == 7:
                 continue
+            # gates (light, signal) switch EVERY effect (v0.1 gated only catalysts); an
+            # inactive motif neither acts nor spends energy
+            if gate <= wp.float64(0.0):
+                continue
+            fire = int(1)
+            if gate < wp.float64(1.0) and (eff == 2 or eff == 5):
+                if wp.float64(wp.randf(st)) >= gate:
+                    fire = 0
+            if fire == 0:
+                continue
             cost = m_cost[m]
             if spec[IPP, i, j] < cost or spec[IH2O, i, j] < cost:
                 continue
@@ -195,7 +209,10 @@ def k_cell_pass(
                             p_partner[p2] = p
                             break
             elif eff == 3:             # membrane: accrete L into the cell's bilayer store
-                take = int(m_strength[m])
+                xt = wp.float64(m_strength[m]) * gate
+                take = int(xt)
+                if gate < wp.float64(1.0) and wp.float64(wp.randf(st)) < xt - wp.float64(take):
+                    take += 1
                 if take > spec[IL, i, j]:
                     take = spec[IL, i, j]
                 spec[IL, i, j] -= take
@@ -221,7 +238,10 @@ def k_cell_pass(
                 p_motor[p] = best
             elif eff == 6:             # emit: force `strength` events of the target reaction
                 rx = m_target[m]
-                ev = int(m_strength[m])
+                xe = wp.float64(m_strength[m]) * gate
+                ev = int(xe)
+                if gate < wp.float64(1.0) and wp.float64(wp.randf(st)) < xe - wp.float64(ev):
+                    ev += 1
                 for u in range(max_sub):
                     su = sub_s[rx, u]
                     if su < 0:
@@ -382,6 +402,9 @@ def k_cell_pass(
                         if seen == pick:
                             tmpl = p2
                             break
+            bp = p_partner[p]
+            if bp >= 0 and bp != p and p_partner[bp] == p:
+                p_partner[bp] = -1           # leaving a binder pair: release the partner
             res_idx = cell_base[c] + started
             child = free_slots[res_idx]
             started += 1
@@ -508,12 +531,15 @@ def k_membrane(store_old: wp.array2d(dtype=wp.int32), store_new: wp.array2d(dtyp
 
 @wp.kernel
 def k_transport(p_state: wp.array(dtype=wp.uint8), p_cell: wp.array(dtype=wp.int32),
+                p_partner: wp.array(dtype=wp.int32),
                 p_motor: wp.array(dtype=wp.int32), comp_id: wp.array2d(dtype=wp.int32),
                 fx: wp.array2d(dtype=wp.float64), fy: wp.array2d(dtype=wp.float64),
                 h0: wp.array2d(dtype=wp.float64), seed: wp.int32, H: int, W: int,
                 diff_frac: wp.float64):
     p = wp.tid()
-    if int(p_state[p]) != P_FREE:
+    if int(p_state[p]) != P_FREE or p_partner[p] >= 0:
+        # bound aggregates stay put: partners must share a cell, so every partner link is
+        # resolved inside one cell's serial pass (deterministic, no cross-cell writes)
         p_motor[p] = -1
         return
     c = p_cell[p]
@@ -749,7 +775,7 @@ class Polymers:
         dev = s.device
         if self.fluid is not None and self.fluid.b is not None and s.p_count > 0:
             fb = self.fluid.b
-            wp.launch(k_transport, dim=s.p_cap, inputs=[s.p_state, s.p_cell, s.p_motor,
+            wp.launch(k_transport, dim=s.p_cap, inputs=[s.p_state, s.p_cell, s.p_partner, s.p_motor,
                       s.compartment_id, fb["fx"], fb["fy"], fb["h0"],
                       wp.int32(seed32(self.key_move, tick)), h, w,
                       wp.float64(POLY_DIFFUSION_RATE * self.cfg.run.dt_seconds)], device=dev)

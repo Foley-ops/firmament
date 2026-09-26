@@ -86,3 +86,27 @@ migrated.
   species/keys, unknown rule-file keys → errors.
 - **Single-writer lease:** `runs/<id>/.lease` (pid). A live holder blocks other writers;
   a dead holder's lease is reclaimed and logged; the same pid (auto-restart) re-enters.
+
+## 2026-09-26 — Bug-court fixes (docs/bug-court-2026-09-25/, tests/test_court_regressions.py)
+Physics/rule changes that came with the fixes (each test failed on fc90e3d, passes now):
+- **Shorelines are walls.** A wet cell sees a higher dry neighbour as a wall (no slope) and
+  a lower dry neighbour as floodable ground. (v0.1/v0.2 treated a dry bank's ground height
+  as a water surface: still lakes developed 7.5 m/s currents.)
+- **Diffusion follows concentration** (count per metre of water column) with a shared-
+  column exchange area — Fick's law. (Counts-based diffusion un-mixed solutions 3.6×.)
+- **Bound aggregates don't drift.** A polymer with a partner (binder pair) is not
+  transported, so every partner link stays inside one cell and is released there when
+  either member dies or leaves to copy. Simplification chosen for determinism; real
+  analog: aggregates are far less mobile than free chains.
+- **Gates switch every effect.** Light (photoactive) and signal (sense) gates scale
+  membrane, emit, motor and binder effects as well as catalysis; a fully gated-off motif
+  neither acts nor spends P~P.
+- **Dust settles per second**, not per tick.
+Engineering: commands validated before acceptance and applied before logging (a failed
+command can never enter history); natural-event parameters range-checked; events and
+edits write state arrays in place (the GPU fluid graph holds fixed pointers); event RNG
+keyed by (tick, n) as separate counter words; graceful Ctrl-C/SIGTERM stop with shutdown
+snapshot and flush; `event` waits for pending history; `replay --verify` refuses vacuous
+comparisons and matches causal counts; lineage readable while buffered and flushed at
+every snapshot; lease is an OS flock (no stale-reclaim race); restart budget resets on
+progress; API bounds checks and layer validation; developer EDIT re-baselines the audit.

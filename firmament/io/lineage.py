@@ -27,10 +27,12 @@ class LineageDB:
             first_tick INTEGER, last_tick INTEGER, max_depth INTEGER);
         """)
         self.buf: list[tuple] = []
+        self.pending_parent: dict[int, int] = {}      # buffered child -> parent (readable)
 
     def add_copies(self, tick: int, events: list[tuple]) -> None:
         # events: (child_id, parent_id, cell, length, mutations) sorted by child_id
         self.buf.extend((c, p, tick, cell, ln, mu) for c, p, cell, ln, mu in events)
+        self.pending_parent.update((c, p) for c, p, _, _, _ in events)
         if len(self.buf) >= 10000:
             self.flush()
 
@@ -39,15 +41,23 @@ class LineageDB:
             self.db.executemany("INSERT OR REPLACE INTO copies VALUES(?,?,?,?,?,?)", self.buf)
             self.db.commit()
             self.buf.clear()
+            self.pending_parent.clear()
+
+    def parent_of(self, cid: int) -> int | None:
+        """Parent id, whether the copy event is still buffered or already on disk."""
+        if cid in self.pending_parent:
+            return self.pending_parent[cid]
+        row = self.db.execute("SELECT parent_id FROM copies WHERE child_id=?", (cid,)).fetchone()
+        return None if row is None else row[0]
 
     def depth_of(self, pid: int) -> int:
         d = 0
         cur = pid
         while cur and d < 100000:
-            row = self.db.execute("SELECT parent_id FROM copies WHERE child_id=?", (cur,)).fetchone()
-            if row is None:
+            parent = self.parent_of(cur)
+            if parent is None:
                 break
-            cur = row[0]
+            cur = parent
             d += 1
         return d
 
@@ -55,10 +65,10 @@ class LineageDB:
         out = [pid]
         cur = pid
         while cur and len(out) < limit:
-            row = self.db.execute("SELECT parent_id FROM copies WHERE child_id=?", (cur,)).fetchone()
-            if row is None or row[0] == 0:
+            parent = self.parent_of(cur)
+            if parent is None or parent == 0:
                 break
-            cur = row[0]
+            cur = parent
             out.append(cur)
         return out
 

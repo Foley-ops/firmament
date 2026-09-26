@@ -7,8 +7,6 @@ Only available when the sim was started with --developer (sched.developer_allowe
 """
 from __future__ import annotations
 
-import warp as wp
-
 from firmament.io import rundir
 from firmament.io.logging import get
 
@@ -47,35 +45,83 @@ def edit_polymer(sched, slot: int, sequence: str | None = None, description: str
     return _edit(sched, "edit_polymer", description, slot=slot, sequence=sequence)
 
 
+EDITABLE_FIELDS = ("elevation", "sediment", "water_depth", "water_u", "water_v", "vapor", "temp",
+                   "light", "light_water", "compartment_id", "membrane_store", "albedo_dust",
+                   "vent_flux")
+
+
+def validate_edit(sched, p: dict) -> None:
+    import numbers
+
+    import numpy as np
+    s = sched.state
+    h, w = s.shape
+    action = p.get("action")
+
+    def cell_ok():
+        x, y = p.get("x"), p.get("y")
+        if not (isinstance(x, numbers.Integral) and isinstance(y, numbers.Integral)
+                and 0 <= x < w and 0 <= y < h):
+            raise ValueError(f"cell ({x},{y}) outside the {w}x{h} world")
+    if action == "set_field":
+        if p.get("field") not in EDITABLE_FIELDS:
+            raise ValueError(f"field {p.get('field')!r} is not editable")
+        cell_ok()
+        v = p.get("value")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v):
+            raise ValueError("value must be a finite number")
+    elif action == "set_species":
+        if p.get("species") not in sched.chem.index:
+            raise ValueError(f"unknown species {p.get('species')!r}")
+        cell_ok()
+        c = p.get("count")
+        if not isinstance(c, numbers.Integral) or not 0 <= c < 2**31:
+            raise ValueError("count must be an integer in [0, 2^31)")
+    elif action == "edit_polymer":
+        slot = p.get("slot")
+        if not isinstance(slot, numbers.Integral) or not 0 <= slot < s.p_cap:
+            raise ValueError(f"slot {slot} out of range")
+        if p.get("sequence") is not None:
+            from firmament.core.polymers import MIN_LEN
+            from firmament.operator.console import _parse_seq
+            n = len(_parse_seq(p["sequence"]))
+            if not MIN_LEN <= n <= sched.cfg.polymers.max_length:
+                raise ValueError(f"sequence length {n} out of range")
+    else:
+        raise ValueError(f"unknown developer action: {action!r}")
+
+
 def apply_edit(sched, p: dict) -> None:
+    from firmament.operator.console import _assign, _parse_seq
     s = sched.state
     action = p["action"]
     if action == "set_field":
-        arr = getattr(s, p["field"])
-        a = arr.numpy().copy()
+        a = getattr(s, p["field"]).numpy().copy()
         if a.ndim == 3:
             a[:, p["y"], p["x"]] = p["value"]
         else:
             a[p["y"], p["x"]] = p["value"]
-        setattr(s, p["field"], wp.array(a, dtype=arr.dtype, device=s.device))
+        _assign(s, p["field"], a)
     elif action == "set_species":
         a = s.species.numpy().copy()
         a[sched.chem.index[p["species"]], p["y"], p["x"]] = p["count"]
-        s.species = wp.array(a, dtype=wp.int32, device=s.device)
+        _assign(s, "species", a)
     elif action == "edit_polymer":
-        from firmament.operator.console import _parse_seq
         slot = p["slot"]
         if p.get("sequence") is not None:
             seq = _parse_seq(p["sequence"])
             sq = s.p_seq.numpy().copy()
             sq[slot, :] = 0
             sq[slot, :len(seq)] = seq
-            s.p_seq = wp.array(sq, dtype=wp.uint8, device=s.device)
+            _assign(s, "p_seq", sq)
             ln = s.p_len.numpy().copy()
             ln[slot] = len(seq)
-            s.p_len = wp.array(ln, dtype=wp.int32, device=s.device)
+            _assign(s, "p_len", ln)
             mo = s.p_motifs.numpy().copy()
             mo[slot] = sched.poly.motif_mask_host(seq)
-            s.p_motifs = wp.array(mo, dtype=wp.int32, device=s.device)
-    else:
-        raise ValueError(f"unknown developer action: {action}")
+            _assign(s, "p_motifs", mo)
+    # an EDIT deliberately breaks conservation (the run is TOUCHED): the audit takes a
+    # new baseline at its next check instead of halting the run
+    aud = getattr(sched, "audit", None)
+    if aud is not None:
+        aud.baseline_elements = None

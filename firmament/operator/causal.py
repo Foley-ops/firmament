@@ -26,10 +26,25 @@ COMPONENT = {"seed_placed": "operator", "EDIT": "developer"} | {k: "operator" fo
 _lock = threading.Lock()
 
 
-def submit(sched, kind: str, params: dict) -> None:
-    """Queue a command from any thread; it is committed at the next tick boundary."""
+def validate(sched, kind: str, params: dict) -> None:
+    """Every command is checked BEFORE it is accepted, so an invalid one can never reach
+    the causal log (v0.1 logged first, and a bad record bricked the run forever)."""
+    from firmament.operator import console, developer
     if kind not in COMPONENT:
         raise ValueError(f"unknown causal command: {kind}")
+    if not isinstance(params, dict):
+        raise ValueError("command parameters must be an object")
+    if kind == "seed_placed":
+        console.validate_seed(sched, params)
+    elif kind == "EDIT":
+        developer.validate_edit(sched, params)
+    else:
+        console.validate_natural(sched, kind, params)
+
+
+def submit(sched, kind: str, params: dict) -> None:
+    """Queue a command from any thread; it is committed at the next tick boundary."""
+    validate(sched, kind, params)
     with _lock:
         sched.mailbox.append((kind, dict(params)))
 
@@ -45,10 +60,13 @@ def commit_now(sched, kind: str, params: dict) -> dict:
     if sched.events.count != s.causal_n:
         raise RuntimeError(f"causal log has {sched.events.count} records but state has applied "
                            f"{s.causal_n} — refusing to fork history silently")
-    rec = sched.events.append(kind, s.tick, component=COMPONENT[kind], n=s.causal_n,
-                              params=params)
+    validate(sched, kind, params)
+    # apply FIRST, log second: if application fails nothing reaches history (in-memory
+    # state is only ever persisted by snapshots, which cannot happen in between)
+    n = s.causal_n
+    rec = {"event": kind, "params": params, "n": n, "tick": s.tick}
     _apply(sched, rec, live=True)
-    return rec
+    return sched.events.append(kind, rec["tick"], component=COMPONENT[kind], n=n, params=params)
 
 
 def load_replay(sched, events_path: Path) -> int:
@@ -79,6 +97,11 @@ def apply_due(sched) -> None:
     with _lock:
         pending, sched.mailbox[:] = list(sched.mailbox), []
     for kind, params in pending:
+        try:
+            validate(sched, kind, params)       # state may have changed since submit
+        except ValueError as e:
+            log.warning("command rejected at tick boundary", extra={"kind": kind, "error": str(e)})
+            continue
         commit_now(sched, kind, params)
 
 

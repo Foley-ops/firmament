@@ -70,6 +70,22 @@ def k_wind(wind_u: wp.array2d(dtype=wp.float32), wind_v: wp.array2d(dtype=wp.flo
     wind_v[i, j] = 0.5 * wp.cos(wp.float32(6.2831853) * t / day_s + ph)
 
 
+@wp.func
+def eta_seen(hw: wp.array2d(dtype=wp.float64), elev: wp.array2d(dtype=wp.float64),
+             sed: wp.array2d(dtype=wp.float64), ni: int, nj: int,
+             eta_c: wp.float64) -> wp.float64:
+    """Water-surface height a wet cell 'sees' at a neighbour. A dry neighbour whose
+    ground lies above our surface is a WALL (it contributes no slope); a dry neighbour
+    lower than our surface is flooded onto (standard wetting-drying treatment). Using
+    the dry bank's ground height as a surface drove 7.5 m/s currents in still lakes."""
+    if hw[ni, nj] >= wp.float64(H_MIN):
+        return elev[ni, nj] + sed[ni, nj] + hw[ni, nj]
+    g = elev[ni, nj] + sed[ni, nj]
+    if g < eta_c:
+        return g
+    return eta_c
+
+
 @wp.kernel
 def k_momentum(hw: wp.array2d(dtype=wp.float64), elev: wp.array2d(dtype=wp.float64),
                sed: wp.array2d(dtype=wp.float64), u: wp.array2d(dtype=wp.float64),
@@ -84,8 +100,9 @@ def k_momentum(hw: wp.array2d(dtype=wp.float64), elev: wp.array2d(dtype=wp.float
     jp = wp.min(j + 1, W - 1)
     im = wp.max(i - 1, 0)
     ip = wp.min(i + 1, H - 1)
-    ex = (elev[i, jp] + sed[i, jp] + hw[i, jp] - (elev[i, jm] + sed[i, jm] + hw[i, jm])) / wp.float64(jp - jm)
-    ey = (elev[ip, j] + sed[ip, j] + hw[ip, j] - (elev[im, j] + sed[im, j] + hw[im, j])) / wp.float64(ip - im)
+    eta_c = elev[i, j] + sed[i, j] + hw[i, j]
+    ex = (eta_seen(hw, elev, sed, i, jp, eta_c) - eta_seen(hw, elev, sed, i, jm, eta_c)) / wp.float64(jp - jm)
+    ey = (eta_seen(hw, elev, sed, ip, j, eta_c) - eta_seen(hw, elev, sed, im, j, eta_c)) / wp.float64(ip - im)
     # quadratic Manning bottom friction (real shallow-flow drag), semi-implicit
     hh = wp.max(hw[i, j], wp.float64(0.05))
     sp = wp.sqrt(u[i, j] * u[i, j] + v[i, j] * v[i, j])
@@ -337,6 +354,7 @@ def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: i
     n = spec[s, ci, cj]
     if n <= 0 or hw[ci, cj] < wp.float64(H_MIN):
         return 0
+    hh = hw[ci, cj]
     taken = int(0)
     for k in range(4):
         ni = ci
@@ -353,11 +371,15 @@ def diff_out(spec: wp.array3d(dtype=wp.int32), s: int, ci: int, cj: int, face: i
             continue
         if hw[ni, nj] < wp.float64(H_MIN):
             continue
-        d = n - spec[s, ni, nj]
-        if d <= 0:
-            continue
+        # Fick: flux ∝ concentration difference × shared column (v0.1 used counts, so
+        # a uniform solution un-mixed toward shallow water)
+        hn = hw[ni, nj]
+        dconc = wp.float64(n) / hh - wp.float64(spec[s, ni, nj]) / hn
+        d = dconc * wp.min(hh, hn)
         st = wp.rand_init(seed, wp.int32(((ci * W + cj) * 4 + k) * ns + s))
-        amt = stoch_round(wp.float64(d) * diff_frac, st)
+        if d <= wp.float64(0.0):
+            continue
+        amt = stoch_round(d * diff_frac, st)
         if amt > n - taken:
             amt = n - taken
         if k == face:

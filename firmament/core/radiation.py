@@ -28,7 +28,9 @@ def k_radiation(temp: wp.array3d(dtype=wp.float64), water: wp.array2d(dtype=wp.f
         alb = wp.float64(pc.ALBEDO_WATER)
     du = wp.float64(dust[i, j])
     alb = alb + du * (wp.float64(0.6) - alb)      # ash brightens the surface
-    dust[i, j] = wp.float32(du * wp.float64(0.99999))  # dust settles (~ sim-week)
+    # dust settles at a per-SECOND rate (v0.1 applied 0.99999 per tick, so dt changed it);
+    # rate = -ln(0.99999)/60 s reproduces the old behaviour at dt = 60 s (~48-day half-life)
+    dust[i, j] = wp.float32(du * wp.exp(-wp.float64(1.6666750000833e-07) * dt))
     sw = S * cosz * (wp.float64(1.0) - alb)
     light[i, j] = wp.float32(sw)
     light_water[i, j] = wp.float32(sw * wp.exp(-wp.float64(pc.K_WATER_LIGHT) * d))

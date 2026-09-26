@@ -17,8 +17,9 @@ Only one process may write a run at a time (`runs/<id>/.lease`); a second writer
 refused while the first is alive. `dt_seconds` must be a multiple of 60.
 
 ## Stop
-Ctrl-C (or kill). A shutdown snapshot is written on clean exit; an unclean kill loses
-at most `snapshot_every_sim_days` of progress (resume from the last snapshot).
+Ctrl-C or `kill` (SIGTERM) = graceful: the current tick finishes, then a shutdown snapshot
+is written and all buffered metrics/lineage/analysis are flushed. A second Ctrl-C forces
+an immediate exit. `kill -9` loses only what resume regenerates deterministically.
 
 ## Resume / long-run mode
 ```bash
@@ -48,6 +49,8 @@ firmament seed --run <run_id> --sequence M1M3M1M2M4M2… --cell x,y
 ## Natural events from the CLI (GUI console is the live path)
 ```bash
 firmament event --run <run_id> --type rain --params '{"intensity_mm":10,"radius":60}'
+# parameters are validated first; if logged history after the snapshot is pending it
+# replays first, then the event applies — the printed tick is the real one
 ```
 
 ## Daily report

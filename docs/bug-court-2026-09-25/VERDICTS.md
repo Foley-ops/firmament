@@ -1,5 +1,10 @@
 # Bug court — 2026-09-25 (HEAD fc90e3d)
 
+> **Status 2026-09-26: ALL 10 convicted bugs FIXED**, plus the 4 prosecutor-proven
+> leads (replay --verify vacuous pass, lease reclaim race, seed/verify mismatch, volcano
+> odd minerals) and several cheap leads. Each has a regression test in
+> `tests/test_court_regressions.py` that failed on fc90e3d and passes after the fix.
+
 Method: 4 prosecutors (life kernel, environment physics, history/persistence, observation/interfaces) had to reproduce each accusation with a script on the current code, CPU-only. An independent defense agent re-ran every repro and tried to acquit (intended behavior, flawed repro, unreachable state). 12 accusations, 12 guilty (10 distinct bugs: meteor and 'failed command poisons the log' were each found twice). Repro scripts are in `evidence/` (paths below are relative to it). Run from the repo root with `CUDA_VISIBLE_DEVICES="" uv run python <script>`.
 
 ## 1. A binder partner link is never cleared: after the other polymer dies or is reused, the survivor stays FREE with a stale p_partner and can never be copied or bind again

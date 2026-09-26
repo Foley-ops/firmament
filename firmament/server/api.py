@@ -75,6 +75,22 @@ def build_view(sched, layers: list[str], ds: int) -> dict:
     return out
 
 
+BASE_LAYERS = ("elevation", "water", "temp", "light", "compartments", "polymer_density", "lineage")
+
+
+def _valid_layer(sched, name) -> bool:
+    if not isinstance(name, str):
+        return False
+    if name in BASE_LAYERS:
+        return True
+    if name.startswith("species:"):
+        return name.split(":", 1)[1] in sched.chem.index
+    if name.startswith("motif:"):
+        b = name.split(":", 1)[1]
+        return b.isdigit() and int(b) < sched.poly.nm
+    return False
+
+
 def make_app(sched, run_dir: Path) -> FastAPI:
     app = FastAPI(title="FIRMAMENT")
     sched.viewers = 0
@@ -175,6 +191,9 @@ def make_app(sched, run_dir: Path) -> FastAPI:
 
     @app.get("/api/inspect/cell")
     def inspect_cell(x: int, y: int):
+        h, w = sched.state.shape
+        if not (0 <= x < w and 0 <= y < h):
+            raise HTTPException(status_code=400, detail=f"cell ({x},{y}) outside the {w}x{h} world")
         v = _view()
         chem = sched.chem
         w = v["shape"][1]
@@ -293,8 +312,10 @@ def make_app(sched, run_dir: Path) -> FastAPI:
                 try:
                     msg = await asyncio.wait_for(ws.receive_text(), timeout=0.5)
                     req = json.loads(msg)
-                    if "layers" in req:
-                        sched.view_layers = req["layers"]
+                    if isinstance(req, dict) and isinstance(req.get("layers"), list):
+                        # only known layer names reach build_view (it runs in the SIM
+                        # thread; a bad name like "motif:abc" used to crash the world)
+                        sched.view_layers = [n for n in req["layers"] if _valid_layer(sched, n)]
                 except asyncio.TimeoutError:
                     pass
                 if sched.view_cache is not None:
